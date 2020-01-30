@@ -1,0 +1,10 @@
+*.o
+*.pyc
+*.pyo
+*.swp
+.idea/
+.vscode/
+.history/
+*.a
+temp/
+.ipynb_checkpoints

@@ -1,0 +1,62 @@
+// Copyright(c) 2019-2020 Intel Corporation All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//   * Redistributions of source code must retain the above copyright
+//     notice, this list of conditions and the following disclaimer.
+//   * Redistributions in binary form must reproduce the above copyright
+//     notice, this list of conditions and the following disclaimer in
+//     the documentation and/or other materials provided with the
+//     distribution.
+//   * Neither the name of Intel Corporation nor the names of its
+//     contributors may be used to endorse or promote products derived
+//     from this software without specific prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef CONSTANTS_H
+#define CONSTANTS_H 
+
+#define INVALID_CHANNEL_ID -1
+#define NUM_CORES {{data.NUM_CORES}}
+#define NUM_MCS_PER_CORE {{data.NUM_MCS_PER_CORE}}
+#define NUM_GCS_PER_CORE {{data.NUM_GCS_PER_CORE}}
+#define NUM_MCS (NUM_CORES * NUM_MCS_PER_CORE)
+#define NUM_GCS (NUM_CORES * NUM_GCS_PER_CORE)
+#define NUM_MC_TO_GC_DELAYS {{data.NUM_MC_TO_GC_DELAYS}}
+#define MCAD_CXGRP_ID {{data.MCAD_CXGRP_ID}}
+#define MCSOMA_CXGRP_ID {{data.MCSOMA_CXGRP_ID}}
+#define GAMMA_CYCLE_DURATION {{data.GAMMA_CYCLE_DURATION}}
+#define NUM_GAMMA_CYCLES_TRAIN {{data.NUM_GAMMA_CYCLES_TRAIN}}
+#define NUM_GAMMA_CYCLES_TEST {{data.NUM_GAMMA_CYCLES_TEST}}
+#define NUM_GAMMA_CYCLES_IDLE {{data.NUM_GAMMA_CYCLES_IDLE}}
+#define POSITIVE_THETA_PERIOD_TRAIN (GAMMA_CYCLE_DURATION * NUM_GAMMA_CYCLES_TRAIN)
+#define POSITIVE_THETA_PERIOD_TEST (GAMMA_CYCLE_DURATION * NUM_GAMMA_CYCLES_TEST)
+#define NEGATIVE_THETA_PERIOD (GAMMA_CYCLE_DURATION * NUM_GAMMA_CYCLES_IDLE)
+#define NO_LEARNING_PERIOD {{data.NO_LEARNING_PERIOD}}
+#define NUM_TEST_SAMPLES {{data.NUM_TEST_SAMPLES}}
+#define USE_LMT_SPIKE_COUNTERS {{data.USE_LMT_SPIKE_COUNTERS}}
+#define RUN_TIME {{data.RUN_TIME}}
+#define LOG_SNIP {{data.LOG_SNIP}}
+#define LOG(f_, ...) if (LOG_SNIP) printf((f_), ##__VA_ARGS__)
+
+#if LOG_SNIP == 1
+    static const char *command2strings[] = {
+        "DO_NOTHING","SWITCH_TO_NEGATIVE_THETA", "SWITCH_TO_POSITIVE_THETA",
+        "DISABLE_LEARNING", "CHANGE_MODE_AND_SWITCH_TO_POSITIVE_THETA"};
+#else
+    static const char *command2strings;
+#endif
+
+#endif 
