@@ -10,3 +10,6 @@ To run the models, access to the Loihi software development kit (NxSDK) and the 
 For more information, please visit: https://www.intel.com/content/www/us/en/research/neuromorphic-community.html
 For community support, Q&A and other information, please visit: http://neuromorphic.intel.com 
 
+Acknowledgments
+===============
+
