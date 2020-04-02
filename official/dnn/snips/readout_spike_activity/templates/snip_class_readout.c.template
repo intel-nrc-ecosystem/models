@@ -1,0 +1,140 @@
+/*
+INTEL CONFIDENTIAL
+
+Copyright © 2019 Intel Corporation.
+
+This software and the related documents are Intel copyrighted
+materials, and your use of them is governed by the express
+license under which they were provided to you (License). Unless
+the License provides otherwise, you may not use, modify, copy,
+publish, distribute, disclose or transmit  this software or the
+related documents without Intel's prior written permission.
+
+This software and the related documents are provided as is, with
+no express or implied warranties, other than those that are
+expressly stated in the License.
+*/
+
+#include "snip_class_readout.h"
+
+#include <stdlib.h>
+
+#include "nxsdk.h"
+#include "utils.h"
+
+// Channel for communicating back the classes
+static int channelID = -1;
+
+// Number of different classes to classify for
+#define NUM_CLASSES {{ NUM_CLASSES }}
+
+// Number of time steps each image is run for
+#define NUM_STEPS_PER_IMG {{ NUM_STEPS_PER_IMG }}
+
+// Address of compartments - each representing a class
+uint32_t core_ids[NUM_CLASSES] = {{ CORE_IDS }};
+
+// Compartment ids
+static uint32_t cx_ids[NUM_CLASSES] = {{ CX_IDS }};
+
+// Address of LMT counters - each representing a class
+uint32_t lmt_output_spike_counter_ids[NUM_CLASSES] = {{ LMT_OUTPUT_SPIKE_COUNTER_IDS }};
+
+// Sum of spikes seen so far. This is reset once the class is inferred.
+static int32_t output_spike_counters[NUM_CLASSES] = {0};
+
+extern int numCores;
+
+static CoreId coreId;
+static NeuronCore *nc;
+CxState *cx;
+
+// Guard function to readout the spike counters. Runs every time step
+int do_readout(runState *RunState) {
+    // LOG("Starting doReadout\n");
+    if (channelID == -1) {
+      channelID = getChannelID("readout");
+      if (channelID == -1) {
+        // Could not find channel named readout
+        LOG("readout channel does not exist");
+        return 0;
+      }
+    }
+    // printf("Ending doReadout\n");
+    if ({{ READ_SPIKES }} || ((RunState->time_step) % NUM_STEPS_PER_IMG == 0)) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+uint32_t readAndResetSpikeCounter(uint32_t time_step, uint32_t idx) {
+    /* Read out the spike counter idx and reset them to zero */
+    uint32_t value = SPIKE_COUNT[time_step&3][idx];
+    SPIKE_COUNT[time_step&3][idx] = 0;
+    return (int32_t) value;
+}
+
+uint32_t inferClassFromSpikingActivity() {
+    /* Infers class name by looking into the spiking activity of each counter. Picks the class which spiked the most */
+    uint32_t index_of_max_value = 0;
+    int32_t max_value = output_spike_counters[0];
+    for (uint32_t i = 1; i < NUM_CLASSES; ++i) {
+        if (output_spike_counters[i] >= max_value) {
+            max_value = output_spike_counters[i];
+            index_of_max_value = i;
+        }
+    }
+    return index_of_max_value;
+}
+
+void classify(runState *RunState) {
+
+    /* If this time step marks end of an image, send out the classification in this time step */
+    if (RunState->time_step % NUM_STEPS_PER_IMG == 0) {
+        // LOG("Starting Classification\n");
+        // Send these spike counters to super host and set output_spike_counters to 0
+        uint32_t inferredClass = inferClassFromSpikingActivity();
+        // LOG("Inferred Class %d\n", inferredClass);
+        writeChannel(channelID, &inferredClass, 1);
+        for (uint32_t i = 0; i < NUM_CLASSES; ++i) {
+           output_spike_counters[i]  = 0;
+        }
+        // LOG("Ending Classification\n");
+    }
+
+}
+
+void readoutSpikes(runState *RunState) {
+    // LOG("Starting spike readout %d\n", RunState->time_step);
+    /* readout the spike counters */
+    for (uint32_t i = 0; i < NUM_CLASSES; ++i) {
+       output_spike_counters[i] += readAndResetSpikeCounter(RunState->time_step, lmt_output_spike_counter_ids[i]);
+       // LOG("Counter %d: %d - ", i, output_spike_counters[i]);
+    }
+    // LOG("timeStep %d\n", RunState->time_step);
+    // LOG("Ending readout %d\n", RunState->time_step);
+}
+
+void readoutVoltage(runState *RunState) {
+    // LOG("Starting voltage readout %d\n", RunState->time_step);
+    /* readout voltage values */
+    for(uint32_t i=0; i<NUM_CLASSES; i++){
+        coreId.id = core_ids[i];
+        nc = NEURON_PTR(coreId);
+        cx = nc->cx_state;
+        output_spike_counters[i] = cx[cx_ids[i]].V;
+    }
+    // LOG("Ending voltage readout %d\n", RunState->time_step);
+}
+
+void readout(runState *RunState) {
+    // LOG("Starting readout %d\n", RunState->time_step);
+    if ({{ READ_SPIKES }}) {
+        readoutSpikes(RunState);
+    } else {
+        readoutVoltage(RunState);
+    }
+    classify(RunState);
+    // LOG("Ending readout %d\n", RunState->time_step);
+}
