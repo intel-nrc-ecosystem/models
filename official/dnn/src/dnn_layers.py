@@ -2316,7 +2316,7 @@ class NxInputLayer(NxLayer, InputLayer):
                 cxIds = np.arange(numCx)
 
                 # Add dummy neurons
-                outputSize = np.prod(outputShape[1:]).astype(int)
+                outputSize = np.prod(outputShape).astype(int)
                 mod = numCx % 4
                 cxIds = np.concatenate([cxIds,
                                         [numCx + i for i in range(mod)]]).astype(int)

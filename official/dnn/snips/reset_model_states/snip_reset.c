@@ -86,7 +86,7 @@ void reset(runState *RunState) {
     for(int i=0; i<numCores; i++) {
         logicalToPhysicalCoreId(i, &coreId);
         nc = NEURON_PTR(coreId);
-        nx_fast_init32(nc->dendrite_accum, 8192/2, 0);
+        nx_fast_init32(nc->dendrite_accum, 8192, 0);
     }
 
     LOG("NxTF: Done resetting dendrite_accum. %d\n", RunState->time_step);

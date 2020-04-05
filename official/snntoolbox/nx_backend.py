@@ -61,12 +61,14 @@ class SNN(AbstractSNN):
     def __init__(self, config, queue=None):
         AbstractSNN.__init__(self, config, queue)
 
+        os.environ['SLURM'] = '1'
+
         self.snn = None
         self._spiking_layers = {}
         self.spike_probes = None
         self.voltage_probes = None
         self.param_scales = None
-        self.slopes = None
+        self.slopes = {}
         self._previous_layer_name = None
         self.do_probe_spikes = \
             any({'spiketrains', 'spikerates', 'correlation', 'spikecounts',
@@ -181,16 +183,32 @@ class SNN(AbstractSNN):
 
         elif self.normalize_thresholds:
             # The final threshold mantissa is calculated using the thresh_mant
-            # and thresh_exp from te normalization algorithm.
+            # and thresh_exp from the normalization algorithm.
             vThMant = self.thresh_mants[layer.name]
             vThExp = self.thresh_exps[layer.name]
             compartment_kwargs['vThMant'] = int(vThMant * 2**vThExp)
 
-        else:
-            desired_threshold_to_input_ratio = eval(self.config.get(
-                'loihi', 'desired_threshold_to_input_ratio'))
-            scale = np.round(np.log2(desired_threshold_to_input_ratio))
-            compartment_kwargs['vThMant'] = int(2**(8 + scale)) - 1
+        if len(layer.weights) and not self.normalize_thresholds:
+            # Todo: This code is duplicated from the threshold normalization
+            #       algorithm. Extract function!
+            param_percentile = self.config.getfloat(
+                'normalization', 'param_percentile', fallback=100)
+            num_weight_bits = layer_kwargs.get('numWeightBits', 8)
+            num_bias_bits = layer_kwargs.get('numBiasBits', 12)
+            W_MAX = 2 ** num_weight_bits - 1
+            b_MAX = 2 ** num_bias_bits - 1
+            weights, biases = layer.get_weights()
+            weight_norm = np.percentile(np.abs(weights.ravel()),
+                                        param_percentile)
+            scale_ratio = np.percentile(
+                np.abs(biases) / weight_norm, param_percentile)
+            if scale_ratio > 0:
+                param_scale = np.min([W_MAX, b_MAX / scale_ratio]) / weight_norm
+            else:
+                param_scale = W_MAX / weight_norm
+            self.param_scales[layer.name] = param_scale
+            compartment_kwargs['vThMant'] = int(round(param_scale))
+            print(compartment_kwargs['vThMant'])
 
         if self.do_probe_spikes:
             compartment_kwargs['probeSpikes'] = True
@@ -249,6 +267,8 @@ class SNN(AbstractSNN):
             vThMant = self.thresh_mants[name]
             vThExp = self.thresh_exps[name]
             compartment_kwargs['vThMant'] = int(vThMant * 2 ** vThExp)
+        else:
+            compartment_kwargs['vThMant'] = 255
 
         # Check for soft-reset.
         resetMode = self.config.get(
@@ -332,21 +352,17 @@ class SNN(AbstractSNN):
             weights, biases = nx_layer.get_weights() if is_pooling else \
                 layer.get_weights()
 
-            if not is_pooling:
-                layer.set_weights([weights, biases])
-            else:
-                # Average pooling weights are scaled by the inverse
-                # of the number of averaged units.
-                weights *= 1 / np.prod(layer.pool_size)
+            # Average pooling weights are scaled by the inverse of the number
+            # of averaged units.
+            if is_pooling:
+                pool_size = np.prod(layer.pool_size)
+                weights *= 1 / pool_size
+                if self.param_scales[layer.name] is None:
+                    self.param_scales[layer.name] = \
+                        pool_size * 2 ** num_weight_bits
 
             # Get parameter scaling factor
             param_scale = self.param_scales.get(layer.name, None)
-            if param_scale is None:
-                param_percentile = self.config.getfloat('normalization',
-                                                  'param_percentile')
-                param_scale = get_scale_fac(np.abs(np.concatenate(
-                    [weights, biases], None)), param_percentile)
-                self.param_scales[layer.name] = param_scale
 
             # Get previous layer slope used for scaling biases.
             prev_slope = self.slopes.get(self._previous_layer_name, 1)
@@ -355,13 +371,13 @@ class SNN(AbstractSNN):
 
             # Quantize weights.
             weights = np.clip(
-                weights * param_scale,
+                np.round(weights * param_scale),
                 -2 ** num_weight_bits,
                 2 ** num_weight_bits - 1).astype(int)
 
             # Quantize biases.
             biases = np.clip(
-                biases * param_scale,
+                np.round(biases * param_scale),
                 -2 ** num_bias_bits,
                 2 ** num_bias_bits - 1).astype(int)
 
@@ -386,6 +402,13 @@ class SNN(AbstractSNN):
                 plt.savefig(self._logdir + '/hist_{}_nxmodel'.format(layer.name))
 
             nx_layer.set_weights([weights, biases])
+
+            if not is_pooling and not self.normalize_thresholds:
+                prev = self.param_scales.get(self._previous_layer_name)
+                if prev is None:
+                    prev = 1
+                weights = weights / prev
+                layer.set_weights([weights, biases])
 
         maxNumCompartments = self.config.get(
             'loihi', 'maxNumCompartments', fallback=2**10)
@@ -694,7 +717,7 @@ class SNN(AbstractSNN):
             self.voltage_probes = {}
 
         for layer in self.snn.layers:
-            if not is_spiking(layer, self.config):
+            if not is_spiking(layer, self.config) and 'Input' not in get_type(layer):
                 continue
 
             # In large networks, may not be able to probe more than a single
@@ -1264,7 +1287,7 @@ def normalize_nx_model(parsed_model, config, **kwargs):
 
     # Percentile to use for weight normalization before quantization.
     param_percentile = config.getfloat(
-        'normalization', 'param_percentile', fallback=99.999
+        'normalization', 'param_percentile', fallback=100
     )
 
     # Percentile to use for threshold clipping.
@@ -1361,13 +1384,13 @@ def normalize_nx_model(parsed_model, config, **kwargs):
 
             # Quantize weights.
             weights = np.clip(
-                weights * param_scale,
+                np.round(weights * param_scale),
                 -2 ** num_weight_bits,
                 2 ** num_weight_bits - 1).astype(int)
 
             # Quantize biases.
             biases = np.clip(
-                biases * param_scale,
+                np.round(biases * param_scale),
                 -2 ** num_bias_bits,
                 2 ** num_bias_bits - 1).astype(int)
 
