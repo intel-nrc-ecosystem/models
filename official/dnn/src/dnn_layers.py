@@ -378,6 +378,9 @@ def compileConvlike(self, partitionCandidate):
         kMap.rows = self.kernelIdMap.rows[maskFlat]
         kMap.data = self.kernelIdMap.data[maskFlat]
 
+        # The neuronSize is the number of compartments per neuron.
+        neuronSize = 2 if self.resetMode == 'soft' else 1
+
         # Interleaving #
         ################
 
@@ -386,14 +389,12 @@ def compileConvlike(self, partitionCandidate):
 
         numDestinationGroups = len(destinationGroups)
 
-        if numDestinationGroups > limits.maxNumDestinationGroups:
+        if numDestinationGroups * neuronSize > limits.maxNumDestinationGroups:
             limits.numDestinationGroups += 1
             return
 
         # Compute interleaved size already before interleaving, so we can skip
-        # costly interleaving if size too large. The neuronSize is the number
-        # of compartments per neuron.
-        neuronSize = 2 if self.resetMode == 'soft' else 1
+        # costly interleaving if size too large.
 
         coreSizeInterleaved = _getSizeInterleaved(coreShape, destinationGroups,
                                                   neuronSize)
