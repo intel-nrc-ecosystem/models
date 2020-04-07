@@ -21,10 +21,10 @@ from test import support
 import numpy as np
 
 from nxsdk.graph.nxboard import N2Board
-from nxsdk_modules.dnn.src.data_structures import Layer, SynFmt, Partition, \
+from official.dnn.src.data_structures import Layer, SynFmt, Partition, \
     SynapseGroup, SynEntry, OutputAxonGroup, InputAxonGroup, CompartmentGroup
-from nxsdk_modules.dnn.src.dnn_mapper import DnnMapper
-from nxsdk_modules.dnn.src.optimization import getDummyLayer
+from official.dnn.src.dnn_mapper import DnnMapper
+from official.dnn.src.optimization import getDummyLayer
 
 
 class TestDnnMapper(unittest.TestCase):

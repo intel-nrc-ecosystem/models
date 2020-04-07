@@ -20,13 +20,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from nxsdk_modules.dnn.src.utils import normalizeImageDim, importPlt
+from official.dnn.src.utils import normalizeImageDim, importPlt
 from matplotlib.ticker import IndexLocator, AutoMinorLocator
 
 plt = importPlt()
 
 if TYPE_CHECKING:
-    from nxsdk_modules.dnn.src.data_structures import Layer
+    from official.dnn.src.data_structures import Layer
 
 
 plotproperties = {

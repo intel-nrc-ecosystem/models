@@ -29,7 +29,7 @@
 import random
 import numpy as np
 import pickle
-import nxsdk_modules.epl.src.computeResults as compResults
+import official.epl.src.computeResults as compResults
 
 
 class EplUtils:

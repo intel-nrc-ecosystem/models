@@ -24,7 +24,7 @@ from nxsdk.arch.n2a.compiler.synapsegen.synapse_compiler import \
 from nxsdk.arch.n2a.compiler.tracecfggen.tracecfggen import TraceCfgGen
 
 if TYPE_CHECKING:
-    from nxsdk_modules.dnn.src.data_structures import Partition, Layer
+    from official.dnn.src.data_structures import Partition, Layer
     from nxsdk.arch.n2a.graph.n2acore import N2ACore
 
 

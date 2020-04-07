@@ -32,7 +32,7 @@ import numpy as np
 import os
 import time
 import pickle
-import nxsdk_modules.epl.src.computeResults as computeResults
+import official.epl.src.computeResults as computeResults
 from collections import namedtuple
 
 

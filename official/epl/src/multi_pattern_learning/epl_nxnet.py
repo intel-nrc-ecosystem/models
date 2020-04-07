@@ -33,7 +33,7 @@ import random
 import time
 import os
 from collections import namedtuple
-from nxsdk_modules.epl.src.multi_pattern_learning.epl_parameters import \
+from official.epl.src.multi_pattern_learning.epl_parameters import \
     ParamemtersForEPL, ParamsEPLSlots
 import matplotlib.pyplot as plt
 

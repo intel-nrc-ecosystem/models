@@ -28,7 +28,7 @@
 
 import os
 import inspect
-from nxsdk_modules.epl.src.single_pattern_learning.epl_nxnet import EplNxNet,\
+from official.epl.src.single_pattern_learning.epl_nxnet import EplNxNet,\
     timer
 from jinja2 import Environment, FileSystemLoader
 

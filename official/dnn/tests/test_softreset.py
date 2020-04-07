@@ -10,9 +10,9 @@ from matplotlib import pyplot as plt
 import keras
 from keras.datasets import cifar10
 
-from nxsdk_modules.dnn.tests.test_dnn_compiler import extract, kernel_initializer, \
+from official.dnn.tests.test_dnn_compiler import extract, kernel_initializer, \
     _data_to_img, _plot_stimulus_response, normalize_image_dims
-from nxsdk_modules.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
+from official.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxModel, ProbableStates, NxFlatten, NxDense, NxLayer
 from functools import partial
 

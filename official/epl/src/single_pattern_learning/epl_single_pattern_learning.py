@@ -26,10 +26,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # pylint: disable-all
 
-from nxsdk_modules.epl.src.single_pattern_learning.epl_snips_utils import \
+from official.epl.src.single_pattern_learning.epl_snips_utils import \
     EplWithSNIPs
-from nxsdk_modules.epl.src.epl_utils import EplUtils
-from nxsdk_modules.epl.src.single_pattern_learning.epl_parameters import \
+from official.epl.src.epl_utils import EplUtils
+from official.epl.src.single_pattern_learning.epl_parameters import \
     ParamemtersForEPL
 
 

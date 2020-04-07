@@ -18,8 +18,9 @@
 import unittest
 
 from nxsdk.composable.model import Model
-from nxsdk_modules.dnn.composable.composable_dnn import ComposableDNN
-from nxsdk_modules.dnn.src.dnn_layers import NxInputLayer, NxConv2D, NxAveragePooling2D, NxFlatten, NxDense, NxModel
+from official.dnn.composable.composable_dnn import ComposableDNN
+from official.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
+    NxAveragePooling2D, NxFlatten, NxDense, NxModel
 
 
 class TestComposableDNN(unittest.TestCase):

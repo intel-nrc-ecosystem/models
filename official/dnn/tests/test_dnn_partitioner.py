@@ -22,14 +22,14 @@ from scipy.sparse import lil_matrix
 from test import support
 
 from nxsdk.graph.nxprobes import N2Probe, N2SpikeProbe
-from nxsdk_modules.dnn.src.optimization import getDummyLayer
-from nxsdk_modules.dnn.src.utils import getCoreIdMapFromCoreShape
-from nxsdk_modules.dnn.src.plotting import plotMat
-from nxsdk_modules.dnn.src.data_structures import Layer
-from nxsdk_modules.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
+from official.dnn.src.optimization import getDummyLayer
+from official.dnn.src.utils import getCoreIdMapFromCoreShape
+from official.dnn.src.plotting import plotMat
+from official.dnn.src.data_structures import Layer
+from official.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxModel, ProbableStates, NxAveragePooling2D, NxDepthwiseConv2D, NxDense, \
     NxFlatten, NxConv1D, loadNxModel
-from nxsdk_modules.dnn.src.synapse_compression import SynapseEncoder
+from official.dnn.src.synapse_compression import SynapseEncoder
 
 
 class TestSynapseEncoding(unittest.TestCase):

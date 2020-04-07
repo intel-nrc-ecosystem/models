@@ -22,13 +22,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from nxsdk_modules.dnn.src.data_structures import Layer
-from nxsdk_modules.dnn.src.utils import getCoreOccupancy, \
+from official.dnn.src.data_structures import Layer
+from official.dnn.src.utils import getCoreOccupancy, \
     getCoreIdMapFromCoreShape, getS
 
 if TYPE_CHECKING:
     import logging
-    from nxsdk_modules.dnn.src.dnn_layers import NxLayer
+    from official.dnn.src.dnn_layers import NxLayer
 
 CostTerms = namedtuple('CostTerms', ['coreCost', 'inputAxonCost',
                                      'outputAxonCost', 'synCost',

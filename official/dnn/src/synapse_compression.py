@@ -22,7 +22,7 @@ import math
 import numpy as np
 from scipy.sparse import lil_matrix
 
-from nxsdk_modules.dnn.src.data_structures import SynFmt, SynEntry, Compression
+from official.dnn.src.data_structures import SynFmt, SynEntry, Compression
 
 
 class SynapseEncoder:

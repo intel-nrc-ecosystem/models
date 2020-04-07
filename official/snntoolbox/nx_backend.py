@@ -25,7 +25,7 @@ import tempfile
 import numpy as np
 import keras
 
-import nxsdk_modules.dnn.src.dnn_layers as nxtf
+import official.dnn.src.dnn_layers as nxtf
 from nxsdk.graph.nxboard import N2Board
 from nxsdk.graph.processes.phase_enums import Phase
 from nxsdk.graph.monitor.probes import IntervalProbeCondition

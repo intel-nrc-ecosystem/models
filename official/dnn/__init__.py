@@ -13,7 +13,7 @@
 # no express or implied warranties, other than those that are
 # expressly stated in the License.
 
-from nxsdk_modules.dnn.src.dnn_layers import \
+from official.dnn.src.dnn_layers import \
     ProbableStates, \
     NxModel, \
     NxInputLayer, \

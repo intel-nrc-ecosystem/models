@@ -33,16 +33,16 @@ from nxsdk.composable.resource_map import ResourceMapFactory
 from nxsdk.graph.graph import Graph
 from nxsdk.graph.monitor.probes import SpikeProbeCondition
 from nxsdk.graph.processes.phase_enums import Phase
-from nxsdk_modules.dnn.src.dnn_layers import ProbableStates
+from official.dnn.src.dnn_layers import ProbableStates
 
 
 class ComposableDNN(AbstractComposable):
-    """A DNN that is composable. See nxsdk_modules.dnn.src.dnn_layers.NxModel which is the underlying DNN Model"""
+    """A DNN that is composable. See official.dnn.src.dnn_layers.NxModel which is the underlying DNN Model"""
     def __init__(self, model: 'NxModel', num_steps_per_img: int):
         """
         Wraps a DNNModel and makes it composable
 
-        :param model (nxsdk_modules.dnn.src.dnn_layers.NxModel): The underlying DNN Model created from NxTF Layers
+        :param model (official.dnn.src.dnn_layers.NxModel): The underlying DNN Model created from NxTF Layers
         :param num_steps_per_img: Number of steps to run for each image
         """
         super().__init__()

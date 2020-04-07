@@ -36,11 +36,11 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 import nxsdk.api.n2a as nx
-from nxsdk_modules.epl.src.multi_pattern_learning.epl_snips_utils import \
+from official.epl.src.multi_pattern_learning.epl_snips_utils import \
     EplWithSNIPs
-from nxsdk_modules.epl.src.multi_pattern_learning.epl_parameters import \
+from official.epl.src.multi_pattern_learning.epl_parameters import \
     ParamemtersForEPL
-from nxsdk_modules.epl.src.epl_utils import EplUtils
+from official.epl.src.epl_utils import EplUtils
 from matplotlib.lines import Line2D
 
 

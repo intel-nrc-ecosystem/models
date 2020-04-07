@@ -35,19 +35,19 @@ from keras.models import Model, load_model
 from scipy.sparse import lil_matrix, load_npz, save_npz
 
 # Import plotting modules first to ensure plt backend is set correctly.
-from nxsdk_modules.dnn.src.plotting import plot_multiplicity, plot_coreIdMap, \
+from official.dnn.src.plotting import plot_multiplicity, plot_coreIdMap, \
     plot_core_occupancy, plot_layer_partition, plot_core_utilization, \
     plot_exclusion_criteria_hit_count, visualize_partitions, plot_cost_graph, \
     plot_cost_terms, plot_cx_syn
-from nxsdk_modules.dnn.src.data_structures import Layer, Partition, \
+from official.dnn.src.data_structures import Layer, Partition, \
     SynapseGroup, OutputAxonGroup, CompartmentGroup, InputAxonGroup, \
     serializeLayer, deserializeLayer
-from nxsdk_modules.dnn.src.dnn_mapper import DnnMapper
-from nxsdk_modules.dnn.src.optimization import ExclusionCriteria, \
+from official.dnn.src.dnn_mapper import DnnMapper
+from official.dnn.src.optimization import ExclusionCriteria, \
     PartitionOptimizer, getDummyLayer
-from nxsdk_modules.dnn.src.synapse_compression import SynapseEncoder, \
+from official.dnn.src.synapse_compression import SynapseEncoder, \
     compressSynFmts, remapSynEntries, reconstructKMapFromPartitions
-from nxsdk_modules.dnn.src.utils import getWeightsFromIds, _interleave, \
+from official.dnn.src.utils import getWeightsFromIds, _interleave, \
     _getMultiplicityMapConvlike, _getUniqueSourceGroups, _getSizeInterleaved, \
     _getDestinationGroups, _getPadding, _genKernelIdMap, \
     getPartitionCandidates, getS, logMemTime
@@ -57,7 +57,7 @@ from nxsdk.logutils.nxlogging import get_logger
 if TYPE_CHECKING:
     from nxsdk.arch.n2a.graph.n2acore import N2ACore
     from nxsdk.graph.monitor.probes import Probe, ProbeCondition
-    from nxsdk_modules.dnn.src.data_structures import SynEntry
+    from official.dnn.src.data_structures import SynEntry
 
 
 NX_KWARGS = ['numWeightBits', 'synapseEncoding', 'biasExp', 'vThMant',

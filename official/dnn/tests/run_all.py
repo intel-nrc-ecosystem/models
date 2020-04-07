@@ -15,10 +15,10 @@
 
 """Run all DNN tests."""
 
-from nxsdk_modules.dnn.tests import test_dnn_compiler, test_dnn_tutorials, test_softreset
-from nxsdk_modules.dnn.tests import test_dnn_mapper
-from nxsdk_modules.dnn.tests import test_dnn_partitioner
-
+from official.dnn.tests import test_dnn_compiler, test_dnn_tutorials, \
+    test_softreset
+from official.dnn.tests import test_dnn_mapper
+from official.dnn.tests import test_dnn_partitioner
 
 
 if __name__ == '__main__':

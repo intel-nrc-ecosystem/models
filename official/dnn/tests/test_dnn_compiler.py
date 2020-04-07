@@ -28,10 +28,10 @@ import numpy as np
 from keras import Input, Model
 from keras.layers import Flatten, Dense
 
-from nxsdk_modules.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
+from official.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxModel, ProbableStates, NxAveragePooling2D, NxDepthwiseConv2D, NxConv1D, \
     NxDense, NxFlatten
-from nxsdk_modules.dnn.src.utils import extract
+from official.dnn.src.utils import extract
 
 
 class TestDnnCompiler(unittest.TestCase):

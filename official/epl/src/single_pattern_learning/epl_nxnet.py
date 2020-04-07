@@ -31,7 +31,7 @@ import numpy as np
 import random
 import time
 from collections import namedtuple
-from nxsdk_modules.epl.src.single_pattern_learning.epl_parameters import \
+from official.epl.src.single_pattern_learning.epl_parameters import \
     ParamsEPLSlots, ParamemtersForEPL
 
 
