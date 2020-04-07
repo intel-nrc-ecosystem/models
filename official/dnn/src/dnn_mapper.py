@@ -494,9 +494,8 @@ class DnnMapper:
         """
 
         print("Input axons:")
-        inputAxons = [inAxMap[:, 0] for inAxMap in
-                                self._inAxMap.values()
-                                if inAxMap[0, 2] == core.id]
+        inputAxons = [inAxMap[:, 0] for inAxMap in self._inAxMap.values()
+                      if inAxMap[0, 2] == core.id]
         if len(inputAxons):
             for inputAxon in inputAxons:
                 for i in set(inputAxon):
@@ -504,8 +503,9 @@ class DnnMapper:
                     if sMap.axonType == 2:
                         print("{}    {}".format(
                             i, sMap.population32MapEntry), end="")
-                        print(" synapsePtr={}, synapseLen={}, popSize={}".format(
-                            sMap.synapsePtr, sMap.synapseLen, sMap.popSize))
+                        print(" synapsePtr={}, synapseLen={}, popSize={}"
+                              "".format(sMap.synapsePtr, sMap.synapseLen,
+                                        sMap.popSize))
                     else:
                         print("{}    {}".format(
                             i, sMap.discreteMapEntry), end="")

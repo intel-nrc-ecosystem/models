@@ -32,7 +32,7 @@ from nxsdk_modules.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
 from nxsdk_modules.dnn.src.synapse_compression import SynapseEncoder
 
 
-class Test_SynapseEncoding(unittest.TestCase):
+class TestSynapseEncoding(unittest.TestCase):
     """Test various synapse encoding methods."""
 
     def setUp(self):
@@ -504,7 +504,7 @@ class Test_SynapseEncoding(unittest.TestCase):
                     self.assertEqual(er, r)
 
 
-class Test_NxConv2D(unittest.TestCase):
+class TestNxConv2D(unittest.TestCase):
     """Test methods for partitioning a Nx convolution layer."""
 
     def setUp(self):
@@ -587,7 +587,7 @@ class Test_NxConv2D(unittest.TestCase):
         self.assertTrue(np.array_equal(multiplicityMap, target))
 
 
-class Test_NxAveragePooling2D(unittest.TestCase):
+class TestNxAveragePooling2D(unittest.TestCase):
     """Test partitioning NxPooling layers."""
 
     def setUp(self):
@@ -624,7 +624,7 @@ class Test_NxAveragePooling2D(unittest.TestCase):
         model.clearTemp()
 
 
-class Test_NxDepthwiseConv2D(unittest.TestCase):
+class TestNxDepthwiseConv2D(unittest.TestCase):
     """Test partitioning NxDepthwiseConv2D layers."""
 
     def setUp(self):
@@ -661,7 +661,7 @@ class Test_NxDepthwiseConv2D(unittest.TestCase):
         model.clearTemp()
 
 
-class Test_NxConv1D(unittest.TestCase):
+class TestNxConv1D(unittest.TestCase):
     """Test partitioning NxConv1D layers."""
 
     def setUp(self):
@@ -697,7 +697,7 @@ class Test_NxConv1D(unittest.TestCase):
         model.clearTemp()
 
 
-class Test_NxDense(unittest.TestCase):
+class TestNxDense(unittest.TestCase):
     """Test partitioning NxDense layers."""
 
     def setUp(self):
@@ -734,7 +734,7 @@ class Test_NxDense(unittest.TestCase):
         model.clearTemp()
 
 
-class Test_NxModel(unittest.TestCase):
+class TestNxModel(unittest.TestCase):
     """Test partitioning NxModels."""
 
     def setUp(self):
@@ -906,7 +906,7 @@ class Test_NxModel(unittest.TestCase):
         model.clearTemp()
 
 
-class Test_CompartmentInterface(unittest.TestCase):
+class TestCompartmentInterface(unittest.TestCase):
     """Test CompartmentInterface."""
 
     def test_setter_getter(self):
@@ -987,14 +987,14 @@ class Test_CompartmentInterface(unittest.TestCase):
 
 
 def main():
-    support.run_unittest(Test_SynapseEncoding)
-    support.run_unittest(Test_NxConv2D)
-    support.run_unittest(Test_NxAveragePooling2D)
-    support.run_unittest(Test_NxDepthwiseConv2D)
-    support.run_unittest(Test_NxConv1D)
-    support.run_unittest(Test_NxDense)
-    support.run_unittest(Test_NxModel)
-    support.run_unittest(Test_CompartmentInterface)
+    support.run_unittest(TestSynapseEncoding)
+    support.run_unittest(TestNxConv2D)
+    support.run_unittest(TestNxAveragePooling2D)
+    support.run_unittest(TestNxDepthwiseConv2D)
+    support.run_unittest(TestNxConv1D)
+    support.run_unittest(TestNxDense)
+    support.run_unittest(TestNxModel)
+    support.run_unittest(TestCompartmentInterface)
 
 
 if __name__ == '__main__':

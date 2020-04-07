@@ -219,11 +219,13 @@ def _getMultiplicityMapConvlike(coreIdMap, inputShape, kernelShape, strides,
     :rtype: np.ndarray
     """
 
-    # Subtract zero padding of previous layer from inputShape. Used if previous layer
+    # Subtract zero padding of previous layer from inputShape. Used if previous
+    # layer
     # was ZeroPadding.
     if zeroPadding is not None:
         py0, py1, px0, px1 = zeroPadding
-        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1), inputShape[2])
+        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1),
+                      inputShape[2])
 
     height, width = inputShape[:-1]
     ky, kx = kernelShape
@@ -286,11 +288,12 @@ def _genKernelIdMap(inputShape, outputShape, padding, strides, kernelShape,
     :rtype: coo_matrix
     """
 
-    # Subtract zero padding of previous layer from inputShape. Used if previous layer
-    # was ZeroPadding.
+    # Subtract zero padding of previous layer from inputShape. Used if previous
+    # layer was ZeroPadding.
     if zeroPadding is not None:
         py0, py1, px0, px1 = zeroPadding
-        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1), inputShape[2])
+        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1),
+                      inputShape[2])
 
     inputSize = np.asscalar(np.prod(inputShape))
     outputSize = np.asscalar(np.prod(outputShape))

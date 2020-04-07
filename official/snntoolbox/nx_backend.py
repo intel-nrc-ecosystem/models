@@ -69,6 +69,8 @@ class SNN(AbstractSNN):
         self.voltage_probes = None
         self.param_scales = None
         self.slopes = {}
+        self.thresh_exps = None
+        self.thresh_mants = None
         self._previous_layer_name = None
         self.do_probe_spikes = \
             any({'spiketrains', 'spikerates', 'correlation', 'spikecounts',
@@ -115,7 +117,6 @@ class SNN(AbstractSNN):
             'loihi', 'probe_dt', fallback=1
         )
         assert self.dt >= 1
-
 
     @property
     def is_parallelizable(self):
@@ -203,7 +204,8 @@ class SNN(AbstractSNN):
             scale_ratio = np.percentile(
                 np.abs(biases) / weight_norm, param_percentile)
             if scale_ratio > 0:
-                param_scale = np.min([W_MAX, b_MAX / scale_ratio]) / weight_norm
+                param_scale = \
+                    np.min([W_MAX, b_MAX / scale_ratio]) / weight_norm
             else:
                 param_scale = W_MAX / weight_norm
             self.param_scales[layer.name] = param_scale
@@ -312,7 +314,7 @@ class SNN(AbstractSNN):
         # The softmax layer vmem can saturate during inference.
         # To prevent this add decay.
         if (hasattr(layer, 'activation') and
-                    layer.activation.__name__ == 'softmax'):
+                layer.activation.__name__ == 'softmax'):
             softmax_decay = self.config.get(
                 'loihi', 'softmax_decay', fallback=2**8)
             nx_layer.compartmentKwargs['compartmentVoltageDecay'] = \
@@ -342,7 +344,7 @@ class SNN(AbstractSNN):
             'loihi', 'saturation', fallback=0.
         )
         if saturation and (hasattr(layer, 'activation') and
-                         layer.activation.__name__ != 'softmax'):
+                           layer.activation.__name__ != 'softmax'):
             clampedRelu = ClampedReLU(threshold=0, max_value=saturation)
             layer.activation = clampedRelu
 
@@ -392,14 +394,13 @@ class SNN(AbstractSNN):
                 plt.figure()
                 ax1 = plt.gca()
                 ax2 = ax1.twinx()
-                ax1.hist(
-                    weights.ravel(), bins=bins, label='weights', alpha=0.5
-                )
-                ax2.hist(
-                    biases.ravel(), bins=bins, label='biases', color='m', alpha=0.5
-                )
+                ax1.hist(weights.ravel(), bins=bins, label='weights',
+                         alpha=0.5)
+                ax2.hist(biases.ravel(), bins=bins, label='biases', color='m',
+                         alpha=0.5)
                 plt.legend()
-                plt.savefig(self._logdir + '/hist_{}_nxmodel'.format(layer.name))
+                plt.savefig(os.path.join(self._logdir,
+                                         'hist_{}_nxmodel'.format(layer.name)))
 
             nx_layer.set_weights([weights, biases])
 
@@ -416,7 +417,8 @@ class SNN(AbstractSNN):
 
         # Check if previous layer was ZeroPadding.
         if 'ZeroPadding' in self._previous_layer_name:
-            padding = self._spiking_layers[self._previous_layer_name]._keras_history[0].padding
+            padding = self._spiking_layers[
+                self._previous_layer_name]._keras_history[0].padding
             nx_layer.zeroPadding = tuple(np.ravel(padding))
         self._previous_layer_name = layer.name
 
@@ -505,7 +507,7 @@ class SNN(AbstractSNN):
 
             print("Could not load board.")
             self.snn.summary()
-            mapper = self.snn.compileModel()
+            self.snn.compileModel()
             numChips = len(self.snn.board.n2Chips)
             numCores = [len(self.snn.board.n2Chips[i].n2Cores)
                         for i in range(numChips)]
@@ -598,11 +600,9 @@ class SNN(AbstractSNN):
                     layer.disableUpdates()
 
                 if numIntervals < numLayers:
-                    print("Duration {} less time needed inference"
-                          "with layer clamping using interval {}."
-                          " Using {}".format(
-                        self._duration, lenInterval, numLayers * lenInterval)
-                    )
+                    vals = self._duration, lenInterval, numLayers * lenInterval
+                    print("Duration {} less time needed inference with layer "
+                          "clamping using interval {}. Using {}".format(*vals))
                     numIntervals = numLayers
 
             for _ in range(numIntervals):
@@ -620,7 +620,6 @@ class SNN(AbstractSNN):
                 self.snn.run(residue)
 
         if self._executionTimeProbe is not None:
-            import matplotlib.pyplot as plt
             plt.figure(figsize=(20, 5))
             self._executionTimeProbe.plotExecutionTime()
             plt.savefig(os.path.join(self._logdir, 'etprobe'))
@@ -633,12 +632,9 @@ class SNN(AbstractSNN):
 
             ], -1)
             np.savetxt(os.path.join(self._logdir, 'etprobe_csv'),
-                       executionTime,
-                       fmt='%.4e',
-                       delimiter=',')
+                       executionTime, fmt='%.4e', delimiter=',')
 
         if self._energyProbe is not None:
-            import matplotlib.pyplot as plt
             plt.figure(figsize=(20, 5))
             self._energyProbe.plotEnergy()
             plt.savefig(os.path.join(self._logdir, 'eprobe'))
@@ -717,7 +713,8 @@ class SNN(AbstractSNN):
             self.voltage_probes = {}
 
         for layer in self.snn.layers:
-            if not is_spiking(layer, self.config) and 'Input' not in get_type(layer):
+            if not is_spiking(layer, self.config) and \
+                    'Input' not in get_type(layer):
                 continue
 
             # In large networks, may not be able to probe more than a single
@@ -734,10 +731,12 @@ class SNN(AbstractSNN):
             num_neurons = int(np.prod(layer.output_shape[1:]))
             neurons_to_probe = range(num_neurons)
 
-            if self.num_neurons_to_probe < num_neurons and \
-                    layer != get_spiking_output_layer(self.snn.layers, self.config):
+            not_output = layer != get_spiking_output_layer(self.snn.layers,
+                                                           self.config)
+            if self.num_neurons_to_probe < num_neurons and not_output:
                 neurons_to_probe = np.random.choice(
-                    range(num_neurons), size=self.num_neurons_to_probe, replace=False)
+                    range(num_neurons), size=self.num_neurons_to_probe,
+                    replace=False)
                 self.neurons_to_probe[layer.name] = neurons_to_probe
 
             for i in neurons_to_probe:
@@ -748,7 +747,8 @@ class SNN(AbstractSNN):
                     offset = 1
                 if self.do_probe_spikes:
                     self.spike_probes[layer.name].append(
-                        layer[i + offset].probe(a, probeCondition=probeCondition))
+                        layer[i + offset].probe(a,
+                                                probeCondition=probeCondition))
                 if do_probe_v:
                     self.voltage_probes[layer.name].append(
                         layer[i].probe(v, probeCondition=probeCondition))
@@ -804,8 +804,9 @@ class SNN(AbstractSNN):
 
         probes = self.stack_layer_probes(self.spike_probes[name])
         num_neurons = np.prod(shape[1:-1])
-        if num_neurons > self.num_neurons_to_probe and \
-                layer != get_spiking_output_layer(self.snn.layers, self.config):
+        not_output = layer != get_spiking_output_layer(self.snn.layers,
+                                                       self.config)
+        if num_neurons > self.num_neurons_to_probe and not_output:
             neurons_to_probe = self.neurons_to_probe[layer.name]
             tProbes = np.zeros((num_neurons, probes.shape[-1]))
             tProbes[neurons_to_probe] = probes
@@ -845,8 +846,9 @@ class SNN(AbstractSNN):
         probes = self.stack_layer_probes(self.spike_probes[layer.name])
         shape = list(self.parsed_model.input_shape) + [self._num_timesteps]
         num_neurons = np.prod(shape[1:-1])
-        if num_neurons > self.num_neurons_to_probe and \
-                        layer != get_spiking_output_layer(self.snn.layers, self.config):
+        not_output = layer != get_spiking_output_layer(self.snn.layers,
+                                                       self.config)
+        if num_neurons > self.num_neurons_to_probe and not_output:
             neurons_to_probe = self.neurons_to_probe[layer.name]
             tProbes = np.zeros((num_neurons, probes.shape[-1]))
             tProbes[neurons_to_probe] = probes
@@ -999,10 +1001,11 @@ class SNN(AbstractSNN):
             print("\nNormalizing thresholds.")
             kwargs['logdir'] = self._logdir
 
-            self.param_scales, self.slopes, \
-            self.thresh_mants, self.thresh_exps = \
-                normalize_nx_model(
-                    self.parsed_model, self.config, **kwargs)
+            temp = normalize_nx_model(self.parsed_model, self.config, **kwargs)
+            self.param_scales = temp[0]
+            self.slopes = temp[1]
+            self.thresh_mants = temp[2]
+            self.thresh_exps = temp[3]
 
         else:
             # We can try to load an existing NxModel from disk, but only if we
@@ -1037,7 +1040,8 @@ class SNN(AbstractSNN):
             print("Loading NxModel from file")
             return nxtf.loadNxModel(path, **kwargs)
         else:
-            input_layer = self._spiking_layers[self.parsed_model.layers[0].name]
+            input_layer = \
+                self._spiking_layers[self.parsed_model.layers[0].name]
             output_layer = self._spiking_layers[self._previous_layer_name]
 
         return nxtf.NxModel(input_layer, output_layer, **kwargs)
@@ -1248,8 +1252,7 @@ def normalize_nx_model(parsed_model, config, **kwargs):
     plot_histograms = config.getboolean(
         'loihi', 'plot_histograms', fallback=False)
 
-    if 'logdir' in kwargs:
-        logdir = kwargs['logdir']
+    logdir = kwargs.get('logdir', '')
 
     if 'x_norm' in kwargs:
         x_norm = kwargs[str('x_norm')]  # Values in range [0, 1]
@@ -1354,21 +1357,21 @@ def normalize_nx_model(parsed_model, config, **kwargs):
                 plt.figure()
                 ax1 = plt.gca()
                 ax2 = ax1.twinx()
-                ax1.hist(
-                    weights.ravel(), bins=bins, label='weights', alpha=0.5
-                )
-                ax2.hist(
-                    biases.ravel(), bins=bins, label='biases', color='m', alpha=0.5
-                )
+                ax1.hist(weights.ravel(), bins=bins, label='weights',
+                         alpha=0.5)
+                ax2.hist(biases.ravel(), bins=bins, label='biases', color='m',
+                         alpha=0.5)
                 plt.legend()
-                plt.savefig(logdir + '/hist_{}_real'.format(layer.name))
+                plt.savefig(os.path.join(logdir,
+                                         'hist_{}_real'.format(layer.name)))
 
             # Scale biases to compensate for previous layer threshold scaling
             biases = biases * prev_slope
 
             # Instead of using the maximum parameter for normalization, we may
             # choose the value at a certain percentile to clip outliers.
-            weight_norm = np.percentile(np.abs(weights.ravel()), param_percentile)
+            weight_norm = np.percentile(np.abs(weights.ravel()),
+                                        param_percentile)
 
             print('Weight norm: {}'.format(weight_norm))
 
@@ -1376,7 +1379,8 @@ def normalize_nx_model(parsed_model, config, **kwargs):
             scale_ratio = np.percentile(
                 np.abs(biases) / weight_norm, param_percentile)
             if scale_ratio > 0:
-                param_scale = np.min([W_MAX, b_MAX / scale_ratio]) / weight_norm
+                param_scale = (np.min([W_MAX, b_MAX / scale_ratio]) /
+                               weight_norm)
             else:
                 param_scale = W_MAX / weight_norm
             param_scales[name] = param_scale
@@ -1395,21 +1399,21 @@ def normalize_nx_model(parsed_model, config, **kwargs):
                 2 ** num_bias_bits - 1).astype(int)
 
             if plot_histograms:
+                bins = 32
                 plt.figure()
                 ax1 = plt.gca()
                 ax2 = ax1.twinx()
-                ax1.hist(
-                    weights.ravel(), bins=bins, label='weights', alpha=0.5
-                )
-                ax2.hist(
-                    biases.ravel(), bins=bins, label='biases', color='m', alpha=0.5
-                )
+                ax1.hist(weights.ravel(), bins=bins, label='weights',
+                         alpha=0.5)
+                ax2.hist(biases.ravel(), bins=bins, label='biases', color='m',
+                         alpha=0.5)
                 plt.legend()
-                plt.savefig(logdir + '/hist_{}_intScale'.format(layer.name))
+                plt.savefig(os.path.join(logdir, 'hist_{}_intScale'.format(
+                    layer.name)))
 
             # Softmax layers in Loihi use no threshold.
             if (hasattr(layer, 'activation') and
-                        layer.activation.__name__ == 'softmax'):
+                    layer.activation.__name__ == 'softmax'):
                 continue
 
             # Apply weight changes to layer, so we can estimate PSP. Note that
@@ -1481,8 +1485,7 @@ def normalize_nx_model(parsed_model, config, **kwargs):
             if new_threshold < threshold:
                 print("Update previous slope {} with new slope {} based "
                       "on saturating activation value of {}.".format(
-                    slope, new_slope, saturation
-                ))
+                        slope, new_slope, saturation))
                 thresh_mant, thresh_exp = to_mantexp(
                     new_threshold, 2**num_weight_bits, W_EXP_MAX)
                 threshold = thresh_mant * 2 ** thresh_exp
@@ -1577,9 +1580,9 @@ def overflow_signed(x, num_bits):
 
 
 def to_mantexp(x, mant_max, exp_max):
-    """Transform integer into a mantissa and exponent tuple.
+    """Transform number into a mantissa and exponent tuple.
 
-    :param int x: Input value.
+    :param float x: Input value.
     :param int mant_max: Maximum mantissa.
     :param int exp_max: Maximum exponent.
     :return: Mantissa and exponent.
@@ -1639,17 +1642,20 @@ def get_max_param(weights, biases):
 
 def apply_modifications(model, custom_objects=None):
     """
-    Applies modifications to the model layers by saving and loading. Used for rebuilding
-    after modification of saturation activations.
+    Applies modifications to the model layers by saving and loading. Used for
+    rebuilding after modification of saturation activations.
     :param Model model:
         Modified keras model.
+    :param dict custom_objects: Dictionary of custom objects.
     :return :
         The modified model.
     """
 
-    model_path = os.path.join(tempfile.gettempdir(), next(tempfile._get_candidate_names()) + '.h5')
+    model_path = os.path.join(tempfile.gettempdir(),
+                              next(tempfile._get_candidate_names()) + '.h5')
     try:
         model.save(model_path)
-        return keras.models.load_model(model_path, custom_objects=custom_objects)
+        return keras.models.load_model(model_path,
+                                       custom_objects=custom_objects)
     finally:
         os.remove(model_path)

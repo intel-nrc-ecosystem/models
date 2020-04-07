@@ -315,7 +315,8 @@ def compileConvlike(self, partitionCandidate):
     # Not used in actual spiking layer.
     if self._zeroPadding is not None:
         py0, py1, px0, px1 = self._zeroPadding
-        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1), inputShape[2])
+        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1),
+                      inputShape[2])
 
     inputSize = np.asscalar(np.prod(inputShape))
     layerShape = partitionCandidate.coreIdMap.shape
@@ -324,7 +325,6 @@ def compileConvlike(self, partitionCandidate):
     isDepthwise = 'Depthwise' in layerType or 'Pooling' in layerType
 
     connKwargs = partitionCandidate.connectionKwargs
-    sharedCfgs = partitionCandidate.compartmentKwargs
     limits = self.exclusionCriteria
 
     # Get number of cores used by network so far. Needed for Partition
@@ -411,7 +411,7 @@ def compileConvlike(self, partitionCandidate):
         assert max(permutedDestCxIdxs) <= coreSizeInterleaved
 
         permCxIdToRelCxId = np.array([np.where(permutedDestCxIdxs == i)[0]
-                                   for i in range(coreSizeInterleaved)])
+                                      for i in range(coreSizeInterleaved)])
 
         cIdxMult = numDestinationGroups - 1
 
@@ -442,7 +442,7 @@ def compileConvlike(self, partitionCandidate):
         srcIdMap = partitionCandidate.postLayer.srcIdMap
         multiplicityInterleaved = np.zeros(coreSizeInterleaved, int)
         multiplicityInterleaved[permutedDestCxIdxs] = \
-        multiplicityFlat[relToAbsDestCxIdxMap]
+            multiplicityFlat[relToAbsDestCxIdxMap]
 
         if len(srcIdMap):
             inverseMap = {}
@@ -477,6 +477,10 @@ def compileConvlike(self, partitionCandidate):
             if partition.numOutputAxonCfgEntries > limits.maxNumAxons:
                 limits.numOutputAxons += 1
                 return
+        else:
+            # If output layer, create synapse groups (needed for soft reset).
+            inverseMap = {relCxId: ([cxId], [0]) for relCxId, cxId
+                          in enumerate(permutedDestCxIdxs)}
 
         # SynEntries & SynFmts #
         ########################
@@ -490,17 +494,12 @@ def compileConvlike(self, partitionCandidate):
 
             synEntriesOfCore.append(synEntriesOfSourceGroup)
 
-        # synEntries and synFmts for recurrent connections
+        # Create synEntries and synFmts for recurrent connections.
+        mappedCxIds = {}
         if self.resetMode == 'soft':
-            # If output layer, create synapse groups.
-            if not len(srcIdMap):
-                inverseMap = {relCxId: ([cxId], [0])
-                              for relCxId, cxId in enumerate(permutedDestCxIdxs)}
-
             # To ensure only one recurrent connection per neuron, duplicated
             # recurrent connections receive 0 weight.
             cxIdMap = {}
-            mappedCxIds = {}
             synGrpId = len(uniqueSourceGroups)
             for _, (cxIds, relSrcIds) in inverseMap.items():
                 cxIdHash = hash(tuple(cxIds))
@@ -579,6 +578,7 @@ def compileConvlike(self, partitionCandidate):
             # Get subset of srcIds that have connections in current core.
             _srcIds = np.arange(sourceGroupSize) + sourceGroupSize * axonId
             srcIds = np.intersect1d(srcIdsOfCore, _srcIds, True)
+            assert isinstance(srcIds, np.ndarray)
 
             inputAxonGroup = InputAxonGroup(
                 srcIds, preMultiplicityFlat[srcIds], synapseGroup,
@@ -654,19 +654,21 @@ def compileConvlike(self, partitionCandidate):
 
             # Add dummy neurons
             outputSize = np.prod(self.output_shape[1:]).astype(int)
-            numCx = len(relToAbsDestCxIdxMap)
             maxCxId = max(permutedDestCxIdxs) + 1
             mod = maxCxId % 4
-            permutedDestCxIdxs = np.concatenate([permutedDestCxIdxs,
-                                                 [maxCxId + i for i in range(mod)]]).astype(int)
-            cxIds = [outputSize * neuronSize + self._dummyCxSize + i for i in range(mod)]
+            permutedDestCxIdxs = np.concatenate(
+                [permutedDestCxIdxs,
+                 [maxCxId + i for i in range(mod)]]).astype(int)
+            cxIds = [outputSize * neuronSize + self._dummyCxSize + i
+                     for i in range(mod)]
             relToAbsDestCxIdxMap = np.concatenate([relToAbsDestCxIdxMap,
                                                    cxIds]).astype(int)
-            biasesOfCore = np.concatenate([tempBiases, np.zeros(mod)]).astype(int)
-            biasExpOfCore = np.concatenate([tempBiasExp, np.zeros(mod)]).astype(int)
+            biasesOfCore = np.concatenate([tempBiases,
+                                           np.zeros(mod)]).astype(int)
+            biasExpOfCore = np.concatenate([tempBiasExp,
+                                            np.zeros(mod)]).astype(int)
             self._dummyCxSize += mod
             coreSizeInterleaved += mod
-
 
         biasesInterleaved = np.zeros(coreSizeInterleaved, int)
         biaseExpInterleaved = np.zeros(coreSizeInterleaved, int)
@@ -800,8 +802,8 @@ class NxLayer(object):
         softmax in the ANN, may want to set threshOp to 3 (no spike and
         saturate voltage at threshold), to avoid overflow but preserve order.
     :param str resetMode: Sets reset mode for rate-coded layers. If 'hard',
-        when a neuron spikes the membrane potential is reset to zero. If 'soft',
-        when a neuron spikes the threshold will be subtracted from the
+        when a neuron spikes the membrane potential is reset to zero. If
+        'soft', when a neuron spikes the threshold will be subtracted from the
         membrane threshold.
     """
 
@@ -900,8 +902,7 @@ class NxLayer(object):
 
                 print("vThMant {} exceeds the max value {} which may "
                       "be subtracted using recurrent connections.".format(
-                    vThMant, 255*2**7
-                ))
+                        vThMant, 255*2**7))
 
             wgtExp = np.max([0, wgtExp])
             wgtMant = int(np.rint(vThMant / 2 ** wgtExp))
@@ -924,7 +925,6 @@ class NxLayer(object):
                 self.connectionKwargs.update(
                     {'weightExpSR': 0,
                      'weightMantSR': 255})
-
 
         # Override if passed connection and compartment kwargs.
         # Used when loading an existing NxModel.
@@ -1179,8 +1179,8 @@ class NxLayer(object):
         if self.cxResourceMap is None:
             return
         for chipId, coreId in np.unique(self.cxResourceMap[:, :2], axis=0):
-            inds = np.all(self.cxResourceMap[:, :2] == np.array([chipId, coreId]),
-                          axis=1)
+            inds = np.all(self.cxResourceMap[:, :2] ==
+                          np.array([chipId, coreId]), axis=1)
             maxCxId = np.max(self.cxResourceMap[inds][:, 2])
             numCxGroups = int(np.ceil((maxCxId + 1) / 4))
             core = self._board.chipMap[chipId].coreMap[coreId]
@@ -1246,7 +1246,8 @@ class NxConv2D(NxLayer, Conv2D):
                     inputShape = inputShape[:-1] + (2 * inputShape[-1],)
         return _genKernelIdMap(inputShape, self.output_shape[1:],
                                self._padding, self.strides, self.kernel_size,
-                               self.dilation_rate, zeroPadding=self.zeroPadding)
+                               self.dilation_rate,
+                               zeroPadding=self.zeroPadding)
 
     def getMultiplicityMap(self, coreIdMap):
         """Generate multiplicity map.
@@ -1320,7 +1321,7 @@ class NxConv2D(NxLayer, Conv2D):
 
     @property
     def zeroPadding(self):
-        """Zero padding of previous layer. Used to accoung to ZeroPadding Layers."""
+        """Zero padding of previous layer. Replaces ZeroPadding Layers."""
         return self._zeroPadding
 
     @zeroPadding.setter
@@ -1800,7 +1801,7 @@ class NxDense(NxLayer, Dense):
             partitionCandidate.compartmentKwargs['biasExp']
 
         neuronSize = 2 if self.resetMode == 'soft' else 1
-        somaOffset = 1 if self.resetMode == 'soft' else 0
+        # somaOffset = 1 if self.resetMode == 'soft' else 0
 
         # Iterate over cores #
         ######################
@@ -1832,7 +1833,8 @@ class NxDense(NxLayer, Dense):
 
                 kernelIds = cxIds + 1
                 wgts = weights[i, cxIds]
-                synapseEncoder.encode(relCxIds * neuronSize, wgts, 0, 0, kernelIds)
+                synapseEncoder.encode(relCxIds * neuronSize, wgts, 0, 0,
+                                      kernelIds)
 
                 synEntriesOfSourceGroup = [synapseEncoder.popSynEntries()]
 
@@ -1902,14 +1904,13 @@ class NxDense(NxLayer, Dense):
             # Input Axons #
             ###############
             recurrentSize = len(relCxIds) if self.resetMode == 'soft' else 0
-            inputAxonMultiplicity = np.concatenate([preMultiplicityFlat,
-                                                    np.ones(recurrentSize) * 2])
+            inputAxonMultiplicity = np.concatenate(
+                [preMultiplicityFlat, np.ones(recurrentSize) * 2])
             for axonId, synapseGroup in enumerate(partition.synapseGroups):
-                id = axonId % inputSize
+                srcNodeIds = np.array([axonId % inputSize], int)
                 inputAxonGroup = InputAxonGroup(
-                    np.array([id], int),
-                    inputAxonMultiplicity[axonId: axonId + 1], synapseGroup, 0,
-                    partition)
+                    srcNodeIds, inputAxonMultiplicity[axonId: axonId + 1],
+                    synapseGroup, 0, partition)
 
                 partition.addInputAxonGroup(inputAxonGroup)
 
@@ -1996,7 +1997,7 @@ class NxDense(NxLayer, Dense):
                 relCxIds = np.concatenate(
                     [relCxIds,
                      [maxCxId + i for i in range(mod)]]).astype(int)
-                newCxIds = [outputSize * neuronSize \
+                newCxIds = [outputSize * neuronSize
                             + self._dummyCxSize + i for i in range(mod)]
                 cxIds = np.concatenate([cxIds,
                                         newCxIds]).astype(int)
@@ -2190,8 +2191,8 @@ class NxInputLayer(NxLayer, InputLayer):
                 mappedCxIds = {}
                 synGrpId = 0
 
-                # Check inverseMap to ensure all compartments receive
-                # at least one inhibitory spike.
+                # Check inverseMap to ensure all compartments receive at least
+                # one inhibitory spike.
                 cxIdMap = {}
                 for _, (cxIds, relSrcIds) in inverseMap.items():
                     cxIdHash = hash(tuple(cxIds))
@@ -2239,8 +2240,8 @@ class NxInputLayer(NxLayer, InputLayer):
                 if len(synEntriesOfRecurrentGroup):
                     synEntriesOfCore.append(synEntriesOfRecurrentGroup)
 
-                synFmts, synEntryMap = compressSynFmts(synapseEncoder.getSynFmts(),
-                                                       limits.maxNumSynFmt)
+                synFmts, synEntryMap = compressSynFmts(
+                    synapseEncoder.getSynFmts(), limits.maxNumSynFmt)
 
                 if len(synFmts) > limits.maxNumSynFmt:
                     limits.numSynFmts += 1
@@ -2260,10 +2261,12 @@ class NxInputLayer(NxLayer, InputLayer):
 
                     # Create new synapse group.
                     synapseGroup = SynapseGroup(i, synEntriesOfSourceGroup)
-                    # The longest block of registers in synMem may not exceed 256 words
-                    # for one axon. If axon is shared, only need to find the maximum
-                    # number of words used up by any of the neurons in the population.
-                    if synapseGroup.maxSynMemLen > limits.maxNumSynMemWordsPerAxon:
+                    # The longest block of registers in synMem may not exceed
+                    # 256 words for one axon. If axon is shared, only need to
+                    # find the maximum number of words used up by any of the
+                    # neurons in the population.
+                    if (synapseGroup.maxSynMemLen >
+                            limits.maxNumSynMemWordsPerAxon):
                         limits.synMemPerAxon += 1
                         return
 
@@ -2307,7 +2310,7 @@ class NxInputLayer(NxLayer, InputLayer):
             #####################
             numCx = len(relToAbsDestCxIdxMap)
             if self.resetMode == 'soft':
-                tempCxIdxMap = np.zeros(numCx  * 2, int)
+                tempCxIdxMap = np.zeros(numCx * 2, int)
                 relCxIds = np.arange(numCx) * 2
                 tempCxIdxMap[relCxIds] = relToAbsDestCxIdxMap * 2
                 tempCxIdxMap[relCxIds + 1] = relToAbsDestCxIdxMap * 2 + 1
@@ -2318,16 +2321,17 @@ class NxInputLayer(NxLayer, InputLayer):
                 # Add dummy neurons
                 outputSize = np.prod(outputShape).astype(int)
                 mod = numCx % 4
-                cxIds = np.concatenate([cxIds,
-                                        [numCx + i for i in range(mod)]]).astype(int)
+                cxIds = np.concatenate([cxIds, [numCx + i for i
+                                                in range(mod)]]).astype(int)
 
-                relCxIds = [outputSize * 2 + self._dummyCxSize + i for i in range(mod)]
+                relCxIds = [outputSize * 2 + self._dummyCxSize + i
+                            for i in range(mod)]
                 relToAbsDestCxIdxMap = np.concatenate([relToAbsDestCxIdxMap,
                                                        relCxIds]).astype(int)
 
                 biasMant = np.zeros(numCx + mod, int)
                 biasExp = np.ones_like(biasMant) * \
-                          partitionCandidate.compartmentKwargs['biasExp']
+                    partitionCandidate.compartmentKwargs['biasExp']
                 self._dummyCxSize += mod
             else:
                 cxIds = np.arange(numCx)
@@ -2644,7 +2648,8 @@ class NxModel(Model):
 
         coreCount = 0
         for i, layer in enumerate(reversed(self.layers)):
-            layer.exclusionCriteria.maxNumCoresPerChip = self._maxNumCoresPerChip
+            layer.exclusionCriteria.maxNumCoresPerChip = \
+                self._maxNumCoresPerChip
 
             self.logger.info("Finding best partition for %s.", layer.name)
 
@@ -2712,9 +2717,8 @@ class NxModel(Model):
         if not self._isInitialized:
             self.initialize()
 
-        self.board = N2Board(
-            0,
-            numCoresPerChip=self._maxNumCoresPerChip) if board is None else board
+        self.board = N2Board(0, numCoresPerChip=self._maxNumCoresPerChip) \
+            if board is None else board
 
         hasPartitionConfig, hasMappable = self.canLoad()
 
