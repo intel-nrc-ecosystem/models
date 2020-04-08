@@ -1327,8 +1327,8 @@ class NxConv2D(NxLayer, Conv2D):
 
     @zeroPadding.setter
     def zeroPadding(self, zeroPadding):
-        """ Set zeroPadding and add to padding.
-         :param tuple (int) zeroPadding: Tuple of ints with padding values. """
+        """Set zeroPadding and add to padding.
+         :param tuple (int) zeroPadding: Tuple of ints with padding values."""
         py0, py1, px0, px1 = zeroPadding
         p0, p1, p2, p3 = self._padding
         self._padding = (p0 + py0, p1 + py1, p2 + px0, p3 + px1)
@@ -1497,15 +1497,31 @@ class NxDepthwiseConv2D(NxLayer, DepthwiseConv2D):
             raise NotImplementedError
 
         # Padding tuple
-        self._padding = None
+        self._padding = kwargs.get('_padding', None)
+        self._zeroPadding = kwargs.get('_zeroPadding', None)
 
     def get_config(self):
-        config = {}
+        config = {'_padding': self.padding,
+                  '_zeroPadding': self._zeroPadding}
         baseConfig = DepthwiseConv2D.get_config(self)
         baseConfig2 = NxLayer.get_config(self)
         config.update(baseConfig)
         config.update(baseConfig2)
         return config
+
+    @property
+    def zeroPadding(self):
+        """Zero padding of previous layer. Replaces ZeroPadding Layers."""
+        return self._zeroPadding
+
+    @zeroPadding.setter
+    def zeroPadding(self, zeroPadding):
+        """Set zeroPadding and add to padding.
+         :param tuple (int) zeroPadding: Tuple of ints with padding values."""
+        py0, py1, px0, px1 = zeroPadding
+        p0, p1, p2, p3 = self._padding
+        self._padding = (p0 + py0, p1 + py1, p2 + px0, p3 + px1)
+        self._zeroPadding = zeroPadding
 
     def build(self, input_shape):
         DepthwiseConv2D.build(self, input_shape)
@@ -1517,7 +1533,8 @@ class NxDepthwiseConv2D(NxLayer, DepthwiseConv2D):
     def genKernelIdMap(self):
         return _genKernelIdMap(self.input_shape[1:], self.output_shape[1:],
                                self._padding, self.strides, self.kernel_size,
-                               self.dilation_rate, True)
+                               self.dilation_rate, True,
+                               zeroPadding=self.zeroPadding)
 
     def getMultiplicityMap(self, coreIdMap):
         """Generate multiplicity map.
@@ -1533,7 +1550,8 @@ class NxDepthwiseConv2D(NxLayer, DepthwiseConv2D):
 
         return _getMultiplicityMapConvlike(coreIdMap, self.input_shape[1:],
                                            self.kernel_size, self.strides,
-                                           self._padding, self.dilation_rate)
+                                           self._padding, self.dilation_rate,
+                                           zeroPadding=self.zeroPadding)
 
     def getPartitionCandidates(self):
         """Get possible partition configurations for a layer.
