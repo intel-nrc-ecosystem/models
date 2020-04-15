@@ -74,8 +74,9 @@ class SNN(AbstractSNN):
         self._previous_layer_name = None
         self.do_probe_spikes = \
             any({'spiketrains', 'spikerates', 'correlation', 'spikecounts',
-                 'hist_spikerates_activations'} & self._plot_keys) \
-            or 'spiketrains_n_b_l_t' in self._log_keys
+                 'hist_spikerates_activations'} & self._plot_keys) or \
+            any({'spiketrains_n_b_l_t',
+                 'synaptic_operations_b_t'} & self._log_keys)
         self.num_neurons_to_probe = self.config.getint(
             'loihi', 'num_neurons_to_probe', fallback=np.inf
             )
@@ -210,7 +211,6 @@ class SNN(AbstractSNN):
                 param_scale = W_MAX / weight_norm
             self.param_scales[layer.name] = param_scale
             compartment_kwargs['vThMant'] = int(round(param_scale))
-            print(compartment_kwargs['vThMant'])
 
         if self.do_probe_spikes:
             compartment_kwargs['probeSpikes'] = True
