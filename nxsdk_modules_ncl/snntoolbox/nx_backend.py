@@ -18,6 +18,7 @@ from __future__ import division, absolute_import
 from __future__ import print_function, unicode_literals
 
 import os
+import time
 import warnings
 import tempfile
 
@@ -26,8 +27,9 @@ import keras
 
 import nxsdk_modules_ncl.dnn.src.dnn_layers as nxtf
 from nxsdk.graph.nxboard import N2Board
-from nxsdk.graph.processes.phase_enums import Phase
 from nxsdk.graph.monitor.probes import IntervalProbeCondition
+from nxsdk.composable.model import Model as ComposableModel
+from nxsdk_modules.input_generator.input_generator import InputGenerator
 
 from snntoolbox.parsing.utils import get_type
 from snntoolbox.conversion.utils import get_scale_fac
@@ -36,6 +38,8 @@ from snntoolbox.simulation.plotting import plot_probe
 from snntoolbox.utils.utils import ClampedReLU
 
 from matplotlib import pyplot as plt
+
+from nxsdk_modules_ncl.dnn.composable.composable_dnn import ComposableDNN
 
 W_EXP_MIN = - 2 ** 3
 W_EXP_MAX = - W_EXP_MIN - 1
@@ -63,6 +67,7 @@ class SNN(AbstractSNN):
         os.environ['SLURM'] = '1'
 
         self.snn = None
+        self.composed_snn = None
         self._spiking_layers = {}
         self.spike_probes = None
         self.voltage_probes = None
@@ -88,10 +93,6 @@ class SNN(AbstractSNN):
         # '' here.
         self._layer_to_probe = self.config.get('loihi', 'layer_to_probe',
                                                fallback='')
-        use_reset_snip = self.config.getboolean('loihi', 'use_reset_snip',
-                                                fallback='')
-        self._use_reset_snip = use_reset_snip if use_reset_snip != '' else True
-        self._has_reset_snip = False
         self._executionTimeProbe = None
         self._energyProbe = None
         self.normalize_thresholds = self.config.getboolean(
@@ -491,46 +492,74 @@ class SNN(AbstractSNN):
             os.environ['PARTITION'] = partition
 
         path_models = os.path.join(self._logdir, 'model_dumps', 'runnables')
-        if not os.path.exists(path_models):
-            os.makedirs(path_models)
 
         # Try to load board from disk.
         try:
             assert self.doDumpLoad
             print("Trying to load board from {}.".format(path_models))
-            board, channels = self.load_board(path_models)
-            self.snn.board = board
+            self.composed_snn = ComposableModel.load(path_models)
+            self.snn.board = self.composed_snn.board
 
         # Otherwise, compile model again, possibly using intermediate results.
         except (OSError, AssertionError):
 
             print("Could not load board.")
             self.snn.summary()
-            self.snn.compileModel()
+
+            cdnn = ComposableDNN(self.snn, self._duration)
+            cdnn.name = 'dnn'
+
+            # Configure input generator to stream images via channels from
+            # super host to Loihi.
+            input_generator = InputGenerator(self.snn.layers[0].input_shape,
+                                             interval=self._duration,
+                                             numSnipsPerChip=3)
+            input_generator.name = 'input'
+            input_generator.setBiasExp(6)
+
+            # Add all components to parent model and connect input generator to
+            # SNN.
+            self.composed_snn = ComposableModel('dnn')
+            self.composed_snn.add(cdnn)
+            self.composed_snn.add(input_generator)
+            input_generator.connect(cdnn)
+
+            # Enforce ordering of input and reset snip.
+            # The reset must execute before new input is injected.
+            input_generator.processes.inputEncoder.executeAfter(
+                cdnn.processes.reset)
+
+            self.composed_snn.compile()
+
             numChips = len(self.snn.board.n2Chips)
             numCores = [len(self.snn.board.n2Chips[i].n2Cores)
                         for i in range(numChips)]
             print("numChips: {}\nnumCoresPerChip: {}\nnumCores: {}".format(
                 numChips, numCores, np.sum(numCores)))
 
-            print("Saving NxModel to {}.".format(path_models))
-            self.snn.save(os.path.join(path_models, 'nxModel.h5'))
-
-            # Snips and probes need to be created before board is started,
-            # which happens during dumping and loading of the board.
-            channels = None
-            if self._use_reset_snip:
-                try:
-                    channels = self.setup_snips(self.snn.board)
-                except OSError:
-                    pass
-
-            # Set up probes.
-            self.set_vars_to_record()
-
             if self.doDumpLoad:
-                print("Saving board to {}.".format(path_models))
-                self.save_board(path_models)
+
+                # The save function raises OSError if path exists.
+                if os.path.exists(path_models):
+                    if len(os.listdir(path_models)):
+                        backup_path = path_models + '_{}'.format(time.time())
+                        print("Found existing model dumps while trying to "
+                              "save current model. Backing up to {}."
+                              "".format(backup_path))
+                        os.rename(path_models, backup_path)
+                    else:
+                        os.rmdir(path_models)
+
+                print("Saving NxModel and board to {}.".format(path_models))
+                try:
+                    self.composed_snn.save(path_models)
+                except NotImplementedError as e:
+                    print("Could not save composable model (method not "
+                          "implemented).\n{}".format(e))
+                self.snn.save(os.path.join(path_models, 'nxModel.h5'))
+
+        # Set up probes.
+        self.set_vars_to_record()
 
         if self.probeExecutionTime:
             from nxsdk.api.enums.api_enums import ProbeParameter
@@ -554,9 +583,8 @@ class SNN(AbstractSNN):
                     bufferSize=self._duration // binSize,
                     binSize=binSize))
 
-        # Channels need to be configured after board is started.
-        if channels is not None:
-            configure_channels(self.snn.board, channels, self._num_timesteps)
+        self.composed_snn.start(self.composed_snn.board)
+
 
     def simulate(self, **kwargs):
         """Simulate a spiking network for a certain duration
@@ -573,10 +601,6 @@ class SNN(AbstractSNN):
         :rtype: np.ndarray
         """
 
-        data = kwargs[str('x_b_l')]
-
-        self.set_inputs(data)
-
         # Clamping layers at the beginning of inference may increase
         # accuracy with reduced number of steps.
         # The lenInterval determines how many steps per call to snn.run.
@@ -588,8 +612,9 @@ class SNN(AbstractSNN):
             'loihi', 'interval', fallback=2**10)
         numLayers = len(self.snn.layers)
         enableLayer = 1
+        run_kwargs = {'aSync': True}
         if self._duration <= lenInterval:
-            self.snn.run(self._duration)
+            self.composed_snn.run(self._duration, **run_kwargs)
         else:
             numIntervals = self._duration // lenInterval
             if clampLayers:
@@ -605,7 +630,7 @@ class SNN(AbstractSNN):
                     numIntervals = numLayers
 
             for _ in range(numIntervals):
-                self.snn.run(lenInterval)
+                self.composed_snn.run(lenInterval, **run_kwargs)
 
                 if clampLayers:
                     # Enable updates for next layer
@@ -613,10 +638,12 @@ class SNN(AbstractSNN):
                         self.snn.layers[enableLayer].enableUpdates()
                         enableLayer += 1
 
-            residue = np.max([self._duration - lenInterval * numIntervals,
-                             0])
+            residue = np.max([self._duration - lenInterval * numIntervals, 0])
             if residue:
-                self.snn.run(residue)
+                self.composed_snn.run(residue, **run_kwargs)
+
+        self.set_inputs(kwargs[str('x_b_l')])
+        self.snn.board.finishRun()
 
         if self._executionTimeProbe is not None:
             plt.figure(figsize=(20, 5))
@@ -627,9 +654,7 @@ class SNN(AbstractSNN):
                 self._executionTimeProbe.hostTimePerTimeStep,
                 self._executionTimeProbe.managementTimePerTimeStep,
                 self._executionTimeProbe.learningTimePerTimeStep,
-                self._executionTimeProbe.spikingTimePerTimeStep,
-
-            ], -1)
+                self._executionTimeProbe.spikingTimePerTimeStep], -1)
             np.savetxt(os.path.join(self._logdir, 'etprobe_csv'),
                        executionTime, fmt='%.4e', delimiter=',')
 
@@ -640,6 +665,7 @@ class SNN(AbstractSNN):
 
         print("\nCollecting results...")
         output_b_l_t = self.get_recorded_vars(self.snn.layers)
+        # output = self.composed_snn.composables.dnn.readout_channel.read(1)
 
         return output_b_l_t
 
@@ -651,17 +677,7 @@ class SNN(AbstractSNN):
             reset between samples.
         """
 
-        if self._has_reset_snip:
-            return
-
-        print("Resetting membrane potentials...")
-        for layer in self.snn.layers:
-            if not is_spiking(layer, self.config):
-                continue
-            neuronSize = 2 if layer.resetMode == 'soft' else 1
-            for i in range(int(np.prod(layer.output_shape[1:])) * neuronSize):
-                layer[i].voltage = 0
-        print("Done.")
+        pass
 
     def end_sim(self):
         """Clean up after run."""
@@ -972,25 +988,12 @@ class SNN(AbstractSNN):
             print("Not injecting input.")
             return
 
-        print("Setting inputs", flush=True)
+        print("Setting inputs...", flush=True)
 
-        # When using signed spikes, the negated input is concatenated
-        # to the last dimension and values < 0 are set to 0.
-        # Todo : Enable signed input spikes with Dense layers.
-        # may cause error when using InputLayer followed by Dense.
-        if hasattr(self.snn.layers[0], 'signed'):
-            if self.snn.layers[0].signed:
-                inputs = np.concatenate([inputs, -inputs], axis=-1)
-                inputs[inputs < 0] = 0
-
-        inputs = np.ravel(inputs, 'F')
         # Normalize inputs and scale up to 8 bit.
         inputs = (inputs / np.max(inputs) * (2 ** 8 - 1)).astype(int)
-        neuronSize = 2 if self.snn.layers[0].resetMode == 'soft' else 1
-        for i, biasMant in enumerate(inputs):
-            self.snn.layers[0][i * neuronSize].biasMant = biasMant
-            self.snn.layers[0][i * neuronSize].phase = 2
-        print("Done setting inputs", flush=True)
+        self.composed_snn.composables.input.encode(inputs)
+        print("Done setting inputs.", flush=True)
 
     def preprocessing(self, **kwargs):
         """Do any preprocessing."""
@@ -1083,15 +1086,6 @@ class SNN(AbstractSNN):
         board = N2Board(board_id, num_chips, num_cores_per_chip,
                         num_synapses_per_chip)
 
-        # Snips and probes need to be created before board is started, which
-        # happens during dumping and loading of the board.
-        channels = None
-        if self._use_reset_snip:
-            try:
-                channels = self.setup_snips(board)
-            except OSError:
-                pass
-
         # Reconstruct CompartmentInterface of NxLayers.
         cx_resource_maps = np.load(path_map)
         for name, cx_resource_map in cx_resource_maps.items():
@@ -1104,7 +1098,7 @@ class SNN(AbstractSNN):
         # Load board.
         board.loadNeuroCores(path_board)
 
-        return board, channels
+        return board
 
     def save_board(self, path):
         """Dump board to disk.
@@ -1138,77 +1132,6 @@ class SNN(AbstractSNN):
 
         maps = {layer.name: layer.cxResourceMap for layer in self.snn.layers}
         np.savez_compressed(path_map, **maps)
-
-    def setup_snips(self, board):
-        """Setup snips.
-
-        Currently only sets up a snip for resetting membrane potentials
-        between samples.
-
-        :param N2Board board: Board.
-        """
-
-        snip_dir = self.config.get('loihi', 'snip_dir', fallback='')
-
-        if snip_dir == '':
-            snip_dir = os.path.abspath(os.path.join(os.path.dirname(
-                nxtf.__file__), '..', 'snips', 'reset_model_states'))
-
-        if not os.path.exists(snip_dir):
-            raise OSError
-
-        # Configure channels.
-        channels = []
-        for chip_id in range(board.numChips):
-            # Init SNIP for LMT1 (reset injection).
-            snip = board.createSnip(
-                name='init',
-                cFilePath=os.path.join(snip_dir, 'snip_init.c'),
-                includeDir=snip_dir,
-                funcName='init_1',
-                phase=Phase.EMBEDDED_INIT,
-                lmtId=0,
-                chipId=chip_id)
-
-            # Reset SNIP
-            board.createProcess(
-                name='reset',
-                cFilePath=os.path.join(snip_dir, 'snip_reset.c'),
-                includeDir=snip_dir,
-                guardName='do_reset',
-                funcName='reset',
-                phase='mgmt',
-                lmtId=0,
-                chipId=chip_id)
-
-            name = bytes('channel_init_ch{}_lmt0'.format(chip_id), 'utf-8')
-            channel = board.createChannel(name, 'int', 3)
-            channel.connect(None, snip)
-            channels.append(channel)
-
-        self._has_reset_snip = True
-
-        return channels
-
-
-def configure_channels(board, channels, num_timesteps):
-    """Configure channels of previously created snips.
-
-    Starts board if it has not been started yet.
-
-    :param N2Board board: Board.
-    :param channels: Channel to configure.
-    :param int num_timesteps: Number of timesteps that one sample is run for.
-    """
-
-    # Board may have been started already for loading / dumping.
-    if not board.executor.hasStarted():
-        board.start()
-
-    for chip, channel in zip(board.n2Chips, channels):
-        channel.write(3, [chip.numCores, num_timesteps, 1])
-
-    board.sync = False
 
 
 def get_shape_from_label(label):
