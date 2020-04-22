@@ -27,27 +27,24 @@ import keras
 
 import nxsdk_modules_ncl.dnn.src.dnn_layers as nxtf
 from nxsdk.graph.nxboard import N2Board
-from nxsdk.graph.monitor.probes import IntervalProbeCondition
+from nxsdk.api.enums.api_enums import ProbeParameter
+from nxsdk.graph.monitor.probes import IntervalProbeCondition, \
+    PerformanceProbeCondition
 from nxsdk.composable.model import Model as ComposableModel
 from nxsdk_modules.input_generator.input_generator import InputGenerator
+from nxsdk_modules_ncl.dnn.composable.composable_dnn import ComposableDNN
 
 from snntoolbox.parsing.utils import get_type
 from snntoolbox.conversion.utils import get_scale_fac
 from snntoolbox.simulation.utils import AbstractSNN, is_spiking
-from snntoolbox.simulation.plotting import plot_probe
+from snntoolbox.simulation.plotting import plot_probe, \
+    plot_execution_time_probe, plot_energy_probe, plot_parameter_histogram
 from snntoolbox.utils.utils import ClampedReLU
 
-from matplotlib import pyplot as plt
-
-from nxsdk_modules_ncl.dnn.composable.composable_dnn import ComposableDNN
 
 W_EXP_MIN = - 2 ** 3
 W_EXP_MAX = - W_EXP_MIN - 1
 V_THR_MAX = 2 ** 17 - 1
-
-# Debug variables
-USE_PROBES = True
-INJECT_INPUT = True
 
 
 class SNN(AbstractSNN):
@@ -82,51 +79,81 @@ class SNN(AbstractSNN):
             any({'spiketrains_n_b_l_t',
                  'synaptic_operations_b_t'} & self._log_keys)
         self.num_neurons_to_probe = self.config.getint(
-            'loihi', 'num_neurons_to_probe', fallback=np.inf
-            )
+            'loihi', 'num_neurons_to_probe', fallback=np.inf)
         self.neurons_to_probe = {}
         self.num_weight_bits = eval(self.config.get(
             'loihi', 'connection_kwargs'))['numWeightBits']
+        self.num_bias_bits = eval(self.config.get(
+            'loihi', 'connection_kwargs'))['numBiasBits']
+        self.W_MAX = 2 ** self.num_weight_bits - 1
+        self.b_MAX = 2 ** self.num_bias_bits - 1
         self._logdir = self.config.get('paths', 'log_dir_of_current_run')
         # We could use ``fallback=None``, but if a user leaves a field empty
         # in the config file (e.g. save_output =   ), then it will show up as
         # '' here.
         self._layer_to_probe = self.config.get('loihi', 'layer_to_probe',
                                                fallback='')
-        self._executionTimeProbe = None
-        self._energyProbe = None
+        self._execution_time_probe = None
+        self._energy_probe = None
         self.normalize_thresholds = self.config.getboolean(
             'loihi', 'normalize_thresholds', fallback=True)
 
         # Configure probing
-        self.probeExecutionTime = self.config.getboolean(
+        self.probe_execution_time = self.config.getboolean(
             'loihi', 'probe_execution_time', fallback=False)
-        self.probeEnergy = self.config.getboolean(
+        self.probe_energy = self.config.getboolean(
             'loihi', 'probe_energy', fallback=False)
 
         # Configure board dumping
-        self.doDumpLoad = self.config.getboolean(
+        self.do_dump_load = self.config.getboolean(
             'loihi', 'do_dump_load', fallback=False)
 
-        # Limit probing interval to increase performance.
-        self.probeIntervalStart = self.config.getint(
-            'loihi', 'probe_interval_start', fallback=0
-        )
-        assert self.probeIntervalStart >= 0
+        self.clamp_layers = self.config.getboolean('loihi', 'clamp_layers',
+                                                   fallback=False)
 
-        self.dt = self.config.getint(
-            'loihi', 'probe_dt', fallback=1
-        )
-        assert self.dt >= 1
+        self.clamp_duration = self.config.getint('loihi', 'interval',
+                                                 fallback=2**10)
+
+        if self.clamp_layers:
+            assert self.do_probe_spikes is False, \
+                "Currently, probing is not possible while clamping layers."
+            assert self.batch_size == 1, \
+                "Clamping layers currently does not support batch mode."
+            assert self._duration % self.clamp_duration == 0, \
+                "When clamping layers, the run time per sample ({}) must be " \
+                "a multiple of the clamping duration ({}).".format(
+                    self._duration, self.clamp_duration)
+
+        # Plot histograms. Used for visualizing weights and biases before and
+        # after scaling and quantization.
+        self.plot_histograms = config.getboolean('loihi', 'plot_histograms',
+                                                 fallback=False)
+
+        # Todo: Enable saturating activations in snntoolbox. The snntoolbox
+        #       does not support saturating activations. ReLU layers are
+        #       removed. Instead, we add a custom activation to the parsed
+        #       model layers.
+        self.saturation = config.getfloat('loihi', 'saturation', fallback=0.)
+
+        self.desired_threshold_to_input_ratio = \
+            eval(self.config.get('loihi', 'desired_threshold_to_input_ratio'))
+        assert self.desired_threshold_to_input_ratio > 0
+
+        self.reset_mode = config.get('loihi', 'reset_mode', fallback='hard')
+
+        self.signed_input = self.config.getboolean('loihi', 'signed_input',
+                                                   fallback=False)
 
     @property
     def is_parallelizable(self):
         """
         Whether or not the simulator is able to test multiple samples in
-        parallel.
+        parallel. Return ``True`` because even though it is not really
+        parallel, we can run a batch of samples in sequence with input, reset
+        and readout snips before returning control to the superhost.
         """
 
-        return False
+        return True
 
     def get_model_kwargs(self):
         """Return keyword arguments for NxModel constructor.
@@ -190,26 +217,13 @@ class SNN(AbstractSNN):
             vThExp = self.thresh_exps[layer.name]
             compartment_kwargs['vThMant'] = int(vThMant * 2**vThExp)
 
+        # If thresholds are not calibrated based on the dataset, we choose
+        # scaling factors simply based on the parameter distribution.
         if len(layer.weights) and not self.normalize_thresholds:
-            # Todo: This code is duplicated from the threshold normalization
-            #       algorithm. Extract function!
-            param_percentile = self.config.getfloat(
-                'normalization', 'param_percentile', fallback=100)
-            num_weight_bits = layer_kwargs.get('numWeightBits', 8)
-            num_bias_bits = layer_kwargs.get('numBiasBits', 12)
-            W_MAX = 2 ** num_weight_bits - 1
-            b_MAX = 2 ** num_bias_bits - 1
-            weights, biases = layer.get_weights()
-            weight_norm = np.percentile(np.abs(weights.ravel()),
-                                        param_percentile)
-            scale_ratio = np.percentile(
-                np.abs(biases) / weight_norm, param_percentile)
-            if scale_ratio > 0:
-                param_scale = \
-                    np.min([W_MAX, b_MAX / scale_ratio]) / weight_norm
-            else:
-                param_scale = W_MAX / weight_norm
+            param_scale = self.get_parameter_scale(*layer.get_weights())
             self.param_scales[layer.name] = param_scale
+            # Thresholds need to be modified by the same factor as the
+            # parameters so that the overall activity is not changed.
             compartment_kwargs['vThMant'] = int(round(param_scale))
 
         if self.do_probe_spikes:
@@ -219,9 +233,7 @@ class SNN(AbstractSNN):
         connection_kwargs = eval(self.config.get('loihi', 'connection_kwargs'))
 
         # Check for soft-reset.
-        resetMode = self.config.get(
-            'loihi', 'reset_mode', fallback='hard')
-        layer_kwargs.update({'resetMode': resetMode})
+        layer_kwargs.update({'resetMode': self.reset_mode})
 
         layer_kwargs.update(connection_kwargs)
 
@@ -261,21 +273,17 @@ class SNN(AbstractSNN):
                                                   'compartment_kwargs'))
 
         # Check if input layer uses signed spikes.
-        layer_kwargs['signed'] = self.config.getboolean(
-            'loihi', 'signed_input', fallback=False
-        )
+        layer_kwargs['signed'] = self.signed_input
 
         if self.normalize_thresholds:
             vThMant = self.thresh_mants[name]
             vThExp = self.thresh_exps[name]
             compartment_kwargs['vThMant'] = int(vThMant * 2 ** vThExp)
         else:
-            compartment_kwargs['vThMant'] = 255
+            compartment_kwargs['vThMant'] = 127 if self.signed_input else 255
 
         # Check for soft-reset.
-        resetMode = self.config.get(
-            'loihi', 'reset_mode', fallback='hard')
-        layer_kwargs.update({'resetMode': resetMode})
+        layer_kwargs.update({'resetMode': self.reset_mode})
 
         if self.do_probe_spikes:
             compartment_kwargs['probeSpikes'] = True
@@ -324,29 +332,20 @@ class SNN(AbstractSNN):
 
         self._spiking_layers[layer.name] = nx_layer(inbound)
 
+        nx_layer.maxNumCompartments = self.config.get(
+            'loihi', 'maxNumCompartments', fallback=2**10)
+
+        # Check if previous layer was ZeroPadding.
+        if 'ZeroPadding' in self._previous_layer_name:
+            zp = self.parsed_model.get_layer(self._previous_layer_name)
+            nx_layer.zeroPadding = tuple(np.ravel(zp.padding))
+
         is_pooling = 'AveragePooling' in get_type(layer)
 
-        desired_threshold_to_input_ratio = eval(self.config.get(
-            'loihi', 'desired_threshold_to_input_ratio'))
-
-        plot_histograms = self.config.getboolean(
-            'loihi', 'plot_histograms', fallback=False)
-
-        connection_kwargs = eval(self.config.get('loihi', 'connection_kwargs'))
-        num_weight_bits = connection_kwargs.get('numWeightBits', 8)
-        num_bias_bits = connection_kwargs.get('numBiasBits', 12)
-
-        # Todo : Enable saturating activations in snntoolbox.
-        # The snntoolbox does not support saturating activations.
-        # ReLU layers are removed. Instead, we add a custom activation to
-        # the parsed model layers.
-        saturation = self.config.getfloat(
-            'loihi', 'saturation', fallback=0.
-        )
-        if saturation and (hasattr(layer, 'activation') and
-                           layer.activation.__name__ != 'softmax'):
-            clampedRelu = ClampedReLU(threshold=0, max_value=saturation)
-            layer.activation = clampedRelu
+        if self.saturation and (hasattr(layer, 'activation') and
+                                layer.activation.__name__ != 'softmax'):
+            layer.activation = ClampedReLU(threshold=0,
+                                           max_value=self.saturation)
 
         # Convert weights to integers.
         if len(layer.weights) or is_pooling:
@@ -361,7 +360,7 @@ class SNN(AbstractSNN):
                 weights *= 1 / pool_size
                 if self.param_scales[layer.name] is None:
                     self.param_scales[layer.name] = \
-                        pool_size * 2 ** num_weight_bits
+                        pool_size * 2 ** self.num_weight_bits
 
             # Get parameter scaling factor
             param_scale = self.param_scales.get(layer.name, None)
@@ -372,54 +371,24 @@ class SNN(AbstractSNN):
             biases = biases * prev_slope
 
             # Quantize weights.
-            weights = np.clip(
-                np.round(weights * param_scale),
-                -2 ** num_weight_bits,
-                2 ** num_weight_bits - 1).astype(int)
+            weights = to_int(weights, param_scale, self.num_weight_bits)
 
             # Quantize biases.
-            biases = np.clip(
-                np.round(biases * param_scale),
-                -2 ** num_bias_bits,
-                2 ** num_bias_bits - 1).astype(int)
+            biases = to_int(biases, param_scale, self.num_bias_bits)
 
             do_overflow_estimate = self.config.getboolean(
                 'loihi', 'do_overflow_estimate', fallback=False)
             if do_overflow_estimate:
                 check_q_overflow(weights,
-                                 1 / desired_threshold_to_input_ratio)
+                                 1 / self.desired_threshold_to_input_ratio)
 
-            if plot_histograms:
-                bins = 32
-                plt.figure()
-                ax1 = plt.gca()
-                ax2 = ax1.twinx()
-                ax1.hist(weights.ravel(), bins=bins, label='weights',
-                         alpha=0.5)
-                ax2.hist(biases.ravel(), bins=bins, label='biases', color='m',
-                         alpha=0.5)
-                plt.legend()
-                plt.savefig(os.path.join(self._logdir,
-                                         'hist_{}_nxmodel'.format(layer.name)))
+            if self.plot_histograms:
+                filename = 'hist_{}_nxmodel'.format(layer.name)
+                plot_parameter_histogram(self._logdir, filename, weights,
+                                         biases)
 
             nx_layer.set_weights([weights, biases])
 
-            if not is_pooling and not self.normalize_thresholds:
-                prev = self.param_scales.get(self._previous_layer_name)
-                if prev is None:
-                    prev = 1
-                weights = weights / prev
-                layer.set_weights([weights, biases])
-
-        maxNumCompartments = self.config.get(
-            'loihi', 'maxNumCompartments', fallback=2**10)
-        nx_layer.maxNumCompartments = maxNumCompartments
-
-        # Check if previous layer was ZeroPadding.
-        if 'ZeroPadding' in self._previous_layer_name:
-            padding = self._spiking_layers[
-                self._previous_layer_name]._keras_history[0].padding
-            nx_layer.zeroPadding = tuple(np.ravel(padding))
         self._previous_layer_name = layer.name
 
     def build_dense(self, layer):
@@ -468,67 +437,38 @@ class SNN(AbstractSNN):
     def compile(self):
         """Compile the spiking network."""
 
-        # Model may have been loaded already; otherwise, create new.
-        if self.snn is None:
-            self.snn = self.get_model()
-
-        # Todo : Enable saturating activations in snntoolbox.
-        # The snntoolbox does not support saturating activations.
-        # ReLU layers are removed. Instead, we add a custom activation to
-        # the parsed model layers. Here, we save and load the model in order
-        # to apply the modifications.
-        saturation = self.config.getfloat(
-            'loihi', 'saturation', fallback=0.
-        )
-        if saturation:
-            clampedReLU = ClampedReLU(threshold=0, max_value=saturation)
+        if self.saturation:
+            clampedReLU = ClampedReLU(threshold=0, max_value=self.saturation)
             custom_objects = {clampedReLU.__name__: clampedReLU}
-            self.parsed_model = apply_modifications(
-                self.parsed_model, custom_objects)
+            self.parsed_model = apply_modifications(self.parsed_model,
+                                                    custom_objects)
 
         # Set partition environment variable before board is started.
         partition = self.config.get('loihi', 'partition', fallback='')
         if partition != '':
             os.environ['PARTITION'] = partition
+        node = self.config.get('loihi', 'node', fallback='')
+        if node != '':
+            os.environ['BOARD'] = node
 
         path_models = os.path.join(self._logdir, 'model_dumps', 'runnables')
 
         # Try to load board from disk.
         try:
-            assert self.doDumpLoad
+            assert self.do_dump_load
             print("Trying to load board from {}.".format(path_models))
             self.composed_snn = ComposableModel.load(path_models)
-            self.snn.board = self.composed_snn.board
+            self.snn = self.composed_snn.composables.dnn
 
         # Otherwise, compile model again, possibly using intermediate results.
         except (OSError, AssertionError):
 
             print("Could not load board.")
+            self.snn = self.get_model()
             self.snn.summary()
 
-            cdnn = ComposableDNN(self.snn, self._duration)
-            cdnn.name = 'dnn'
-
-            # Configure input generator to stream images via channels from
-            # super host to Loihi.
-            input_generator = InputGenerator(self.snn.layers[0].input_shape,
-                                             interval=self._duration,
-                                             numSnipsPerChip=3)
-            input_generator.name = 'input'
-            input_generator.setBiasExp(6)
-
-            # Add all components to parent model and connect input generator to
-            # SNN.
             self.composed_snn = ComposableModel('dnn')
-            self.composed_snn.add(cdnn)
-            self.composed_snn.add(input_generator)
-            input_generator.connect(cdnn)
-
-            # Enforce ordering of input and reset snip.
-            # The reset must execute before new input is injected.
-            input_generator.processes.inputEncoder.executeAfter(
-                cdnn.processes.reset)
-
+            self.compose_with_input_generator()
             self.composed_snn.compile()
 
             numChips = len(self.snn.board.n2Chips)
@@ -537,54 +477,13 @@ class SNN(AbstractSNN):
             print("numChips: {}\nnumCoresPerChip: {}\nnumCores: {}".format(
                 numChips, numCores, np.sum(numCores)))
 
-            if self.doDumpLoad:
-
-                # The save function raises OSError if path exists.
-                if os.path.exists(path_models):
-                    if len(os.listdir(path_models)):
-                        backup_path = path_models + '_{}'.format(time.time())
-                        print("Found existing model dumps while trying to "
-                              "save current model. Backing up to {}."
-                              "".format(backup_path))
-                        os.rename(path_models, backup_path)
-                    else:
-                        os.rmdir(path_models)
-
-                print("Saving NxModel and board to {}.".format(path_models))
-                try:
-                    self.composed_snn.save(path_models)
-                except NotImplementedError as e:
-                    print("Could not save composable model (method not "
-                          "implemented).\n{}".format(e))
-                self.snn.save(os.path.join(path_models, 'nxModel.h5'))
+            if self.do_dump_load:
+                self.try_saving_composable(path_models)
 
         # Set up probes.
         self.set_vars_to_record()
 
-        if self.probeExecutionTime:
-            from nxsdk.api.enums.api_enums import ProbeParameter
-            from nxsdk.graph.monitor.probes import PerformanceProbeCondition
-            binSize = 2
-            self._executionTimeProbe = self.snn.board.probe(
-                probeType=ProbeParameter.EXECUTION_TIME,
-                probeCondition=PerformanceProbeCondition(
-                    tStart=1, tEnd=self._duration,
-                    bufferSize=self._duration // binSize,
-                    binSize=binSize))
-
-        if self.probeEnergy:
-            from nxsdk.api.enums.api_enums import ProbeParameter
-            from nxsdk.graph.monitor.probes import PerformanceProbeCondition
-            binSize = 2
-            self._energyProbe = self.snn.board.probe(
-                probeType=ProbeParameter.ENERGY,
-                probeCondition=PerformanceProbeCondition(
-                    tStart=1, tEnd=self._duration,
-                    bufferSize=self._duration // binSize,
-                    binSize=binSize))
-
         self.composed_snn.start(self.composed_snn.board)
-
 
     def simulate(self, **kwargs):
         """Simulate a spiking network for a certain duration
@@ -601,71 +500,37 @@ class SNN(AbstractSNN):
         :rtype: np.ndarray
         """
 
-        # Clamping layers at the beginning of inference may increase
-        # accuracy with reduced number of steps.
-        # The lenInterval determines how many steps per call to snn.run.
-        # All layer are initially clamped exept the input layer. Layers
-        # are sequentially unclamped in periods of lenInterval step.
-        clampLayers = self.config.getboolean(
-            'loihi', 'clamp_layers', fallback=False)
-        lenInterval = self.config.getint(
-            'loihi', 'interval', fallback=2**10)
-        numLayers = len(self.snn.layers)
-        enableLayer = 1
         run_kwargs = {'aSync': True}
-        if self._duration <= lenInterval:
-            self.composed_snn.run(self._duration, **run_kwargs)
+        batch_duration = self._duration * self.batch_size
+
+        if self.clamp_layers:
+            num_intervals, remainder = divmod(batch_duration,
+                                              self.clamp_duration)
+            outputs = []
+            for i in range(num_intervals):
+                self.apply_clamp(i)
+                self.composed_snn.run(self.clamp_duration, **run_kwargs)
+                self.set_inputs(kwargs[str('x_b_l')])
+                outputs.append(self.get_spiketrains_output()[..., -1])
+                self.snn.board.finishRun()
+            if remainder:
+                # self.composed_snn.run(remainder, **run_kwargs)
+                raise NotImplementedError
+            output_b_l = np.stack(outputs, -1)
+            output_b_l_t = np.repeat(output_b_l, self.clamp_duration, -1)
         else:
-            numIntervals = self._duration // lenInterval
-            if clampLayers:
-                # Disable layer updates
-                print('Disabling Layer updates')
-                for layer in self.snn.layers[1:]:
-                    layer.disableUpdates()
+            self.composed_snn.run(batch_duration, **run_kwargs)
+            self.set_inputs(kwargs[str('x_b_l')])
+            self.snn.board.finishRun()
 
-                if numIntervals < numLayers:
-                    vals = self._duration, lenInterval, numLayers * lenInterval
-                    print("Duration {} less time needed inference with layer "
-                          "clamping using interval {}. Using {}".format(*vals))
-                    numIntervals = numLayers
+            if self._execution_time_probe is not None:
+                plot_execution_time_probe(self._logdir,
+                                          self._execution_time_probe)
+            print("\nCollecting results...")
+            if self._energy_probe is not None:
+                plot_energy_probe(self._logdir, self._energy_probe)
 
-            for _ in range(numIntervals):
-                self.composed_snn.run(lenInterval, **run_kwargs)
-
-                if clampLayers:
-                    # Enable updates for next layer
-                    if enableLayer < numLayers:
-                        self.snn.layers[enableLayer].enableUpdates()
-                        enableLayer += 1
-
-            residue = np.max([self._duration - lenInterval * numIntervals, 0])
-            if residue:
-                self.composed_snn.run(residue, **run_kwargs)
-
-        self.set_inputs(kwargs[str('x_b_l')])
-        self.snn.board.finishRun()
-
-        if self._executionTimeProbe is not None:
-            plt.figure(figsize=(20, 5))
-            self._executionTimeProbe.plotExecutionTime()
-            plt.savefig(os.path.join(self._logdir, 'etprobe'))
-            executionTime = np.stack([
-                self._executionTimeProbe.totalTimePerTimeStep,
-                self._executionTimeProbe.hostTimePerTimeStep,
-                self._executionTimeProbe.managementTimePerTimeStep,
-                self._executionTimeProbe.learningTimePerTimeStep,
-                self._executionTimeProbe.spikingTimePerTimeStep], -1)
-            np.savetxt(os.path.join(self._logdir, 'etprobe_csv'),
-                       executionTime, fmt='%.4e', delimiter=',')
-
-        if self._energyProbe is not None:
-            plt.figure(figsize=(20, 5))
-            self._energyProbe.plotEnergy()
-            plt.savefig(os.path.join(self._logdir, 'eprobe'))
-
-        print("\nCollecting results...")
-        output_b_l_t = self.get_recorded_vars(self.snn.layers)
-        # output = self.composed_snn.composables.dnn.readout_channel.read(1)
+            output_b_l_t = self.get_recorded_vars(self.snn.layers)
 
         return output_b_l_t
 
@@ -710,11 +575,30 @@ class SNN(AbstractSNN):
     def set_vars_to_record(self):
         """Set variables to record during simulation."""
 
+        if self.probe_execution_time:
+            self._execution_time_probe = self.snn.board.probe(
+                probeType=ProbeParameter.EXECUTION_TIME,
+                probeCondition=PerformanceProbeCondition(
+                    tStart=1, tEnd=self.batch_size * self._duration,
+                    bufferSize=self._duration // 2, binSize=self._duration))
+
+        if self.probe_energy:
+            self._energy_probe = self.snn.board.probe(
+                probeType=ProbeParameter.ENERGY,
+                probeCondition=PerformanceProbeCondition(
+                    tStart=1, tEnd=self.batch_size * self._duration,
+                    bufferSize=self._duration // 2, binSize=self._duration))
+
         # Get probeCondition to limit probing activity.
-        probeCondition = None
-        if self.probeIntervalStart:
-            probeCondition = IntervalProbeCondition(
-                dt=self.dt, tStart=self.probeIntervalStart)
+        condition = None
+        probe_interval_start = self.config.getint(
+            'loihi', 'probe_interval_start', fallback=0)
+        assert probe_interval_start >= 0
+        if probe_interval_start:
+            dt = self.config.getint('loihi', 'probe_dt', fallback=1)
+            assert dt > 0
+            condition = IntervalProbeCondition(dt=dt,
+                                               tStart=probe_interval_start)
 
         a = nxtf.ProbableStates.ACTIVITY
         v = nxtf.ProbableStates.VOLTAGE
@@ -732,60 +616,51 @@ class SNN(AbstractSNN):
                     'Input' not in get_type(layer):
                 continue
 
+            name = layer.name
+
             # In large networks, may not be able to probe more than a single
             # layer at the time.
-            if (self._layer_to_probe != '' and
-                    self._layer_to_probe != layer.name):
+            if self._layer_to_probe != '' and self._layer_to_probe != name:
                 continue
 
             if self.do_probe_spikes:
-                self.spike_probes[layer.name] = []
+                self.spike_probes[name] = []
             if do_probe_v:
-                self.voltage_probes[layer.name] = []
+                self.voltage_probes[name] = []
 
             num_neurons = int(np.prod(layer.output_shape[1:]))
-            neurons_to_probe = range(num_neurons)
+            neuron_size = 2 if layer.resetMode == 'soft' else 1
+            offset = 1 if layer.resetMode == 'soft' else 0
+            is_output_layer = name == get_spiking_output_layer(
+                self.snn.layers, self.config).name
 
-            not_output = layer != get_spiking_output_layer(self.snn.layers,
-                                                           self.config)
-            if self.num_neurons_to_probe < num_neurons and not_output:
-                neurons_to_probe = np.random.choice(
-                    range(num_neurons), size=self.num_neurons_to_probe,
-                    replace=False)
-                self.neurons_to_probe[layer.name] = neurons_to_probe
+            if is_output_layer:
+                # We can use spike probes here instead of activity traces
+                # because the output layer has no shared output axons. But in
+                # case of softmax, we need to probe voltages and convert to
+                # spikes later.
+                probe_type = v if layer.activation.__name__ == 'softmax' else s
+                neurons_to_probe = range(num_neurons)
+            else:
+                probe_type = a
+                if num_neurons > self.num_neurons_to_probe:
+                    neurons_to_probe = np.random.choice(
+                        range(num_neurons), size=self.num_neurons_to_probe,
+                        replace=False)
+                    self.neurons_to_probe[name] = neurons_to_probe
+                else:
+                    neurons_to_probe = range(num_neurons)
 
             for i in neurons_to_probe:
                 # Shift id for multi-compartment neurons in soft-reset mode.
-                offset = 0
-                if layer.resetMode == 'soft':
-                    i *= 2
-                    offset = 1
+                i *= neuron_size
                 if self.do_probe_spikes:
-                    self.spike_probes[layer.name].append(
-                        layer[i + offset].probe(a,
-                                                probeCondition=probeCondition))
+                    i += offset
+                    p = layer[i].probe(probe_type, probeCondition=condition)
+                    self.spike_probes[name].append(p)
                 if do_probe_v:
-                    self.voltage_probes[layer.name].append(
-                        layer[i].probe(v, probeCondition=probeCondition))
-
-        if not USE_PROBES:
-            return
-
-        # The spikes of the last layer are recorded by default because they
-        # contain the networks output (classification guess). We can use spike
-        # probes here instead of activity traces because the output layer has
-        # no shared output axons. But in case of softmax, we need to probe
-        # voltages and convert to spikes later.
-        output_layer = get_spiking_output_layer(self.snn.layers, self.config)
-        num_neurons = int(np.prod(output_layer.output_shape[1:]))
-        p = v if output_layer.activation.__name__ == 'softmax' else s
-        neuronSize = 2 if output_layer.resetMode == 'soft' else 1
-        somaOffset = 1 if (output_layer.resetMode == 'soft') and p == s \
-            else 0
-        self.spike_probes[output_layer.name] = \
-            [output_layer[i * neuronSize + somaOffset].probe(
-                p, probeCondition=probeCondition)
-             for i in range(num_neurons)]
+                    p = layer[i].probe(v, probeCondition=condition)
+                    self.voltage_probes[name].append(p)
 
     def get_spiketrains(self, **kwargs):
         """Get spike trains of a layer.
@@ -819,9 +694,9 @@ class SNN(AbstractSNN):
 
         probes = self.stack_layer_probes(self.spike_probes[name])
         num_neurons = np.prod(shape[1:-1])
-        not_output = layer != get_spiking_output_layer(self.snn.layers,
-                                                       self.config)
-        if num_neurons > self.num_neurons_to_probe and not_output:
+        is_output_layer = \
+            get_spiking_output_layer(self.snn.layers, self.config).name == name
+        if num_neurons > self.num_neurons_to_probe and not is_output_layer:
             neurons_to_probe = self.neurons_to_probe[layer.name]
             tProbes = np.zeros((num_neurons, probes.shape[-1]))
             tProbes[neurons_to_probe] = probes
@@ -829,10 +704,11 @@ class SNN(AbstractSNN):
 
         spiketrains_b_l_t = self.reshape_flattened_spiketrains(probes, shape)
 
-        is_output_layer = \
-            get_spiking_output_layer(self.snn.layers, self.config).name == name
         if is_output_layer:
-            if layer.activation.__name__ == 'softmax':
+            # The read-out snip prevents us from collecting spikes for all time
+            # steps here, so we can't use this code.
+            print("Warning: Probing output layer currently not supported.")
+            if False and layer.activation.__name__ == 'softmax':
                 # If this is the output layer and we are using softmax, we have
                 # probed the voltages and need to encode them in spikes here.
                 return apply_softmax(spiketrains_b_l_t, 1)
@@ -865,8 +741,9 @@ class SNN(AbstractSNN):
                                                        self.config)
         if num_neurons > self.num_neurons_to_probe and not_output:
             neurons_to_probe = self.neurons_to_probe[layer.name]
-            tProbes = np.zeros((num_neurons, probes.shape[-1]))
-            tProbes[neurons_to_probe] = probes
+            tProbes = np.zeros(
+                (probes.shape[0], num_neurons, probes.shape[-1]))
+            tProbes[:, neurons_to_probe] = probes
             probes = tProbes
         spiketrains_b_l_t = self.reshape_flattened_spiketrains(probes, shape)
         return spiketrains_b_l_t // 127
@@ -874,20 +751,24 @@ class SNN(AbstractSNN):
     def get_spiketrains_output(self):
         """Get spike trains of output layer.
 
+        The current implementation uses a read-out snip that only retrieves the
+        last time step. Thus the output array of this method contains zeros in
+        all time steps but the last.
+
         :return: spiketrains_b_l_t
         :rtype: np.ndarray
         """
 
-        layer = get_spiking_output_layer(self.snn.layers, self.config)
-        probes = self.stack_layer_probes(self.spike_probes[layer.name])
-
-        if layer.activation.__name__ == 'softmax':
-            probes = apply_softmax(probes, 0)
-
-        offset = 1 if self.probeIntervalStart else 0
-        steps = self._num_timesteps - self.probeIntervalStart + offset
-        shape = [self.batch_size, self.num_classes, steps]
-        spiketrains_b_l_t = self.reshape_flattened_spiketrains(probes, shape)
+        # Get predicted class labels.
+        out_class = self.composed_snn.composables.dnn.readout_channel.read(
+            self.batch_size)
+        # Transform into 1-hot encoded class vectors.
+        out_spikes = keras.utils.to_categorical(out_class, self.num_classes)
+        shape = (self.batch_size, self.num_classes, self._duration)
+        spiketrains_b_l_t = np.zeros(shape)
+        # Insert output spikes at last time step. All previous time steps are
+        # ignored.
+        spiketrains_b_l_t[:, :, -1] = out_spikes
 
         return spiketrains_b_l_t
 
@@ -928,11 +809,19 @@ class SNN(AbstractSNN):
 
         :param list probes: Probes.
 
-        :return: Array of probe values. Shape: (num_neurons, num_timesteps)
+        :return: Array of probe values.
+                 Shape: (batch_size, num_neurons, num_timesteps)
         :rtype: np.ndarray
         """
 
-        return np.stack([p.data[-self._num_timesteps:] for p in probes])
+        duration = self.batch_size * self._num_timesteps
+        # Temporarily use wrong dimension order (batch size second place) so
+        # we can directly call np.reshape.
+        shape = [len(probes), self.batch_size, self._num_timesteps]
+        arr = np.concatenate([p.data[-duration:] for p in probes])
+        arr = np.reshape(arr, shape)
+        # Move batch axis to front.
+        return np.moveaxis(arr, 1, 0)
 
     def reshape_flattened_spiketrains(self, spiketrains, shape, is_list=True):
         """Reshape flattened spiketrains.
@@ -962,16 +851,20 @@ class SNN(AbstractSNN):
             Shape: (`batch_size`, ``shape``, ``num_timesteps``)
         """
 
-        # Temporarily move time axis so we can reshape in Fortran style.
-        new_shape = shape[:-1]
-        new_shape = np.insert(new_shape, 1, shape[-1])
+        batch_size = shape[0]
+        layer_shape = shape[1:-1]
+        num_timesteps = shape[-1]
+
+        # Temporarily swap batch and time axis so we can reshape in Fortran
+        # style.
+        new_shape = [num_timesteps] + list(layer_shape) + [batch_size]
 
         # Need to flatten in 'C' mode first to stack the timevectors together,
         # then reshape in 'F' style.
         arr = np.reshape(np.ravel(spiketrains), new_shape, 'F')
 
         # Finally, move the time axis back again.
-        return np.moveaxis(arr, 1, -1)
+        return np.swapaxes(arr, 0, -1)
 
     def set_spiketrain_stats_input(self):
         """Count number of operations based on the input spike activity."""
@@ -984,15 +877,13 @@ class SNN(AbstractSNN):
         :param np.ndarray inputs: Input array.
         """
 
-        if not INJECT_INPUT:
-            print("Not injecting input.")
-            return
-
         print("Setting inputs...", flush=True)
 
         # Normalize inputs and scale up to 8 bit.
         inputs = (inputs / np.max(inputs) * (2 ** 8 - 1)).astype(int)
-        self.composed_snn.composables.input.encode(inputs)
+
+        for x in inputs:
+            self.composed_snn.composables.input.encode(np.expand_dims(x, 0))
         print("Done setting inputs.", flush=True)
 
     def preprocessing(self, **kwargs):
@@ -1001,29 +892,14 @@ class SNN(AbstractSNN):
         # Scale thresholds to bring spikerates in optimal range.
         if self.normalize_thresholds:
             print("\nNormalizing thresholds.")
-            kwargs['logdir'] = self._logdir
 
-            temp = normalize_nx_model(self.parsed_model, self.config, **kwargs)
+            temp = self.normalize_nx_model(**kwargs)
             self.param_scales = temp[0]
             self.slopes = temp[1]
             self.thresh_mants = temp[2]
             self.thresh_exps = temp[3]
 
         else:
-            # We can try to load an existing NxModel from disk, but only if we
-            # skip threshold normalization, because the threshold scales are
-            # only applied when building the NxModel from scratch.
-            path = os.path.join(
-                self.config.get('paths', 'log_dir_of_current_run'),
-                'model_dumps', 'runnables', 'nxModel.h5')
-            print("Trying to load NxModel from {}.".format(path))
-            if os.path.exists(path):
-                self.snn = nxtf.loadNxModel(path, **self.get_model_kwargs())
-                return
-            print("Could not load NxModel.")
-
-            # If loading the NxModel failed, we build it from scratch later,
-            # and allocate identity scale factors for it here.
             print("\nSkipping threshold normalization.\n")
             self.param_scales = {layer.name: None
                                  for layer in self.parsed_model.layers}
@@ -1034,17 +910,10 @@ class SNN(AbstractSNN):
         :return: NxModel.
         :rtype: nxtf.NxModel
         """
-        path = os.path.join(
-            self._logdir,
-            'model_dumps', 'runnables', 'nxModel.h5')
+
         kwargs = self.get_model_kwargs()
-        if os.path.exists(path):
-            print("Loading NxModel from file")
-            return nxtf.loadNxModel(path, **kwargs)
-        else:
-            input_layer = \
-                self._spiking_layers[self.parsed_model.layers[0].name]
-            output_layer = self._spiking_layers[self._previous_layer_name]
+        input_layer = self._spiking_layers[self.parsed_model.layers[0].name]
+        output_layer = self._spiking_layers[self._previous_layer_name]
 
         return nxtf.NxModel(input_layer, output_layer, **kwargs)
 
@@ -1133,306 +1002,311 @@ class SNN(AbstractSNN):
         maps = {layer.name: layer.cxResourceMap for layer in self.snn.layers}
         np.savez_compressed(path_map, **maps)
 
+    def try_saving_composable(self, path):
+        """Try to save composable model to ``path``.
 
-def get_shape_from_label(label):
-    """
-    Extract the output shape of a flattened pyNN layer from the layer name
-    generated during parsing.
+        Always saves nxModel, but relies on the save method of the composable
+        to be implemented.
 
-    Parameters
-    ----------
+        :param str path: Where to save model.
+        """
 
-    label: str
-        Layer name containing shape information after a '_' separator.
-
-    Returns
-    -------
-
-    : list
-        The layer shape.
-
-    Example
-    -------
-        >>> get_shape_from_label('02Conv2D_16x32x32')
-        [16, 32, 32]
-
-    """
-    return [int(i) for i in label.split('_')[1].split('x')]
-
-
-def normalize_nx_model(parsed_model, config, **kwargs):
-    """Scale thresholds and weight exponents of network to ideal dynamic range.
-
-    :param keras.Model parsed_model: Parsed Keras model.
-    :param configparser.Configparser config: SNN toolbox configuration.
-    :return: Scale exponents.
-    :rtype: dict
-    """
-
-    # Plot histograms. Used for visualizing weights and biases
-    # before and after scaling and quantization.
-    plot_histograms = config.getboolean(
-        'loihi', 'plot_histograms', fallback=False)
-
-    logdir = kwargs.get('logdir', '')
-
-    if 'x_norm' in kwargs:
-        x_norm = kwargs[str('x_norm')]  # Values in range [0, 1]
-    elif 'x_test' in kwargs:
-        x_norm = kwargs[str('x_test')]
-    elif 'dataflow' in kwargs:
-        x_norm, y = kwargs[str('dataflow')].next()
-    else:
-        raise NotImplementedError
-    print("Using {} samples for normalization.".format(len(x_norm)))
-    sizes = [
-        len(x_norm) * np.array(layer.output_shape[1:]).prod() * 32 /
-        (8 * 2**30) for layer in parsed_model.layers if len(layer.weights) > 0]
-    size_str = ['{:.2f}'.format(s) for s in sizes]
-    print("INFO: Need {} GB for layer activations.\n".format(size_str))
-
-    batch_size = config.getint('simulation', 'batch_size')
-
-    connection_kwargs = eval(config.get('loihi', 'connection_kwargs'))
-    compartment_kwargs = eval(config.get('loihi', 'compartment_kwargs'))
-    # Weights have a maximum of 8 bits, used for biases as well.
-    num_weight_bits = connection_kwargs.get('numWeightBits', 8)
-    num_bias_bits = connection_kwargs.get('numBiasBits', 12)
-    weight_exponent = connection_kwargs['weightExponent']
-    bias_exponent = compartment_kwargs['biasExp']
-
-    # Todo: No need to expose this parameter then.
-    assert bias_exponent == 6, (
-        "Bias exponent should be equal to 6 to cancel out the fix weight and "
-        "threshold gain of 2 ** 6 applied by Loihi.")
-
-    # Todo: No need to expose this parameter then.
-    assert weight_exponent == 0, ("Weight exponent is reserved for threshold "
-                                  "scaling.")
-
-    # Percentile to use for weight normalization before quantization.
-    param_percentile = config.getfloat(
-        'normalization', 'param_percentile', fallback=100
-    )
-
-    # Percentile to use for threshold clipping.
-    activation_percentile = config.getfloat(
-        'normalization', 'activation_percentile', fallback=99.999
-    )
-
-    desired_threshold_to_input_ratio = \
-        eval(config.get('loihi', 'desired_threshold_to_input_ratio'))
-    assert desired_threshold_to_input_ratio > 0
-
-    reset_mode = config.get('loihi', 'reset_mode', fallback='hard')
-
-    int_scale = 2 ** num_weight_bits - 1
-
-    # Input should already be normalized, but do it again just for safety.
-    x = x_norm / np.max(x_norm)
-    # Convert to integers.
-    dvdt = x * int_scale
-
-    spikerates = None
-
-    param_scales = {}
-    slopes = {}
-    thresh_mants = {}
-    thresh_exps = {}
-
-    W_MAX = 2**num_weight_bits - 1
-    b_MAX = 2**num_bias_bits - 1
-
-    # Init param scale
-    param_scale = int_scale
-
-    snn_emulation = keras.models.clone_model(parsed_model)
-    snn_emulation.set_weights(parsed_model.get_weights())
-
-    # Todo : Enable saturating activations in snntoolbox.
-    # The snntoolbox does not support saturating activations.
-    # ReLU layers are removed. Instead, we add a custom activation to
-    # the parsed model layers.
-    saturation = config.getfloat(
-        'loihi', 'saturation', fallback=0.
-    )
-
-    # Want to optimize thr, while keeping weights and biases in right range.
-    for i, layer in enumerate(snn_emulation.layers):
-        name = layer.name
-        print(name)
-
-        prev_name = snn_emulation.layers[i - 1].name
-        prev_param_scale = param_scales.get(prev_name, 1)
-        prev_thresh_mant = thresh_mants.get(prev_name, 1)
-        prev_thresh_exp = thresh_exps.get(prev_name)
-        prev_slope = slopes.get(prev_name, 1)
-
-        # Skip for layers without parameters.
-        # Input, AveragePooling
-        if len(layer.weights) > 0:
-            # Unconstrained floats
-            weights, biases = layer.get_weights()
-
-            if plot_histograms:
-                bins = 32
-                plt.figure()
-                ax1 = plt.gca()
-                ax2 = ax1.twinx()
-                ax1.hist(weights.ravel(), bins=bins, label='weights',
-                         alpha=0.5)
-                ax2.hist(biases.ravel(), bins=bins, label='biases', color='m',
-                         alpha=0.5)
-                plt.legend()
-                plt.savefig(os.path.join(logdir,
-                                         'hist_{}_real'.format(layer.name)))
-
-            # Scale biases to compensate for previous layer threshold scaling
-            biases = biases * prev_slope
-
-            # Instead of using the maximum parameter for normalization, we may
-            # choose the value at a certain percentile to clip outliers.
-            weight_norm = np.percentile(np.abs(weights.ravel()),
-                                        param_percentile)
-
-            print('Weight norm: {}'.format(weight_norm))
-
-            # Calculate parameter scale factor kappa.
-            scale_ratio = np.percentile(
-                np.abs(biases) / weight_norm, param_percentile)
-            if scale_ratio > 0:
-                param_scale = (np.min([W_MAX, b_MAX / scale_ratio]) /
-                               weight_norm)
+        # The save function raises OSError if path exists.
+        if os.path.exists(path):
+            if len(os.listdir(path)):
+                backup_path = path + '_{}'.format(time.time())
+                print("Found existing model dumps while trying to save "
+                      "current model. Backing up to {}.".format(backup_path))
+                os.rename(path, backup_path)
             else:
-                param_scale = W_MAX / weight_norm
-            param_scales[name] = param_scale
-            print("Parameter scale: {}".format(param_scale))
+                os.rmdir(path)
 
-            # Quantize weights.
-            weights = np.clip(
-                np.round(weights * param_scale),
-                -2 ** num_weight_bits,
-                2 ** num_weight_bits - 1).astype(int)
+        print("Saving NxModel and board to {}.".format(path))
+        try:
+            self.composed_snn.save(path)
+        except NotImplementedError as e:
+            print("Could not save composable model (method not implemented).\n"
+                  "{}".format(e))
+        self.snn.save(os.path.join(path, 'nxModel.h5'))
 
-            # Quantize biases.
-            biases = np.clip(
-                np.round(biases * param_scale),
-                -2 ** num_bias_bits,
-                2 ** num_bias_bits - 1).astype(int)
+    def compose_with_input_generator(self):
+        # Determine the number of time steps ("interval") to run for.
+        if self.clamp_layers:
+            # If layer clamping is enabled, check that all settings are valid.
+            num_layers = len(self.parsed_model.layers)
+            try:
+                assert self.clamp_duration * num_layers <= self._duration
+            except AssertionError:
+                new_clamp_duration, res = divmod(self._duration, num_layers)
+                msg = "When clamping layers, the run time per sample ({}) " \
+                      "must be at least as long as the clamping duration " \
+                      "({}) times the number of layers ({}). Reduced the " \
+                      "clamp duration to {}.".format(
+                    self._duration, self.clamp_duration, num_layers,
+                    new_clamp_duration)
+                msg2 = "\nNew clamp duration is either too small or does " \
+                       "not evenly divide the total runtime per sample."
+                assert new_clamp_duration > 1
+                assert self._duration % new_clamp_duration == 0, msg + msg2
+                print("SNN Toolbox Warning:", msg)
+                self.clamp_duration = new_clamp_duration
+            interval = self.clamp_duration
+        else:
+            interval = self._duration
 
-            if plot_histograms:
-                bins = 32
-                plt.figure()
-                ax1 = plt.gca()
-                ax2 = ax1.twinx()
-                ax1.hist(weights.ravel(), bins=bins, label='weights',
-                         alpha=0.5)
-                ax2.hist(biases.ravel(), bins=bins, label='biases', color='m',
-                         alpha=0.5)
-                plt.legend()
-                plt.savefig(os.path.join(logdir, 'hist_{}_intScale'.format(
-                    layer.name)))
+        cdnn = ComposableDNN(self.snn, interval)
+        cdnn.name = 'dnn'
 
-            # Softmax layers in Loihi use no threshold.
-            if (hasattr(layer, 'activation') and
-                    layer.activation.__name__ == 'softmax'):
-                continue
+        # Configure input generator to stream images via channels from super
+        # host to Loihi. Use batch size 1 regardless of actual batch size.
+        shape = (1,) + tuple(self.snn.layers[0].input_shape[1:])
+        input_generator = InputGenerator(shape, interval=interval,
+                                         numSnipsPerChip=3)
+        input_generator.name = 'input'
+        input_generator.setBiasExp(6)
 
-            # Apply weight changes to layer, so we can estimate PSP. Note that
-            # we do not apply the bias exponent here; this method assumes (and
-            # asserts above) that the bias exponent is 6 to cancel out with the
-            # fix weight and threshold gain of 2 ** 6 applied by Loihi.
-            layer.set_weights([weights, biases])
+        # Add all components to parent model and connect input generator to
+        # SNN.
+        self.composed_snn.add(cdnn)
+        self.composed_snn.add(input_generator)
+        input_generator.connect(cdnn)
 
-        if i > 0:
-            # Get excitatory post-synaptic potential for each neuron in layer.
-            dvdt = keras.models.Sequential([layer]).predict(spikerates,
-                                                            batch_size)
-            parsed_model.get_layer(name)
+        # Enforce ordering of input and reset snip.
+        # The reset must execute before new input is injected.
+        input_generator.processes.inputEncoder.executeAfter(
+            cdnn.processes.reset)
 
-            # Layers like Flatten do not have spiking neurons and therefore no
-            # threshold to tune. So we only need to update the input to the
-            # next layer, and propagate the scale.
-            if not is_spiking(layer, config):
-                spikerates = dvdt
-                param_scales[name] = prev_param_scale
-                thresh_exps[name] = prev_thresh_exp
-                thresh_mants[name] = prev_thresh_mant
-                slopes[name] = prev_slope
-                continue
+    def apply_clamp(self, interval_idx):
+        """Turn on / off updates of subsequent layers.
 
-            # Loihi AveragePooling layers get weights of ones. To reproduce
-            # this in our Keras model, we need to apply the same
-            # transformations as for a regular layer that has weights:
-            # 1. Integer transformation, 2. Undoing integer trafo of previous
-            # layer, 3. Multiplying by threshold to go from rates to voltage
-            # change.
-            elif 'AveragePooling' in get_type(layer):
-                weight_norm = 1 / np.prod(layer.pool_size)
-                param_scale = W_MAX / weight_norm
+        Clamping higher layers at the beginning of a run may increase accuracy
+        because wrong spikes due to unstable input rates are avoided.
+
+        All layers except the input are initially clamped and released one by
+        one after ``len_interval`` timesteps, starting with the lowest.
+
+        :param int interval_idx: Current interval. Needed to determine when to
+                                 release a layer, or when a sample has finished
+                                 and the whole network should be clamped again.
+        """
+
+        # In batch mode, many samples may be presented in sequence.
+        num_intervals_per_sample = self._duration // self.clamp_duration
+        rel_interval_idx = interval_idx % num_intervals_per_sample
+
+        # Clamp all layers at beginning of a new sample.
+        if rel_interval_idx == 0:
+            for layer in self.snn.layers:
+                layer.disableUpdates()
+
+        # Release clamp for the next higher layer after each interval.
+        if rel_interval_idx < len(self.snn.layers):
+            self.snn.layers[rel_interval_idx].enableUpdates()
+
+    def normalize_nx_model(self, **kwargs):
+        """Scale thresholds and weight exponents to ideal dynamic range.
+
+        :return: Scale exponents.
+        :rtype: dict
+        """
+
+        # Get dataset for normalization.
+        if 'x_norm' in kwargs:
+            x_norm = kwargs[str('x_norm')]  # Values in range [0, 1]
+        elif 'x_test' in kwargs:
+            x_norm = kwargs[str('x_test')]
+        elif 'dataflow' in kwargs:
+            x_norm, y = kwargs[str('dataflow')].next()
+        else:
+            raise NotImplementedError
+        print("Using {} samples for normalization.".format(len(x_norm)))
+        sizes = [
+            len(x_norm) * np.array(layer.output_shape[1:]).prod() * 32 /
+            (8 * 2**30) for layer in self.parsed_model.layers
+            if len(layer.weights) > 0]
+        size_str = ['{:.2f}'.format(s) for s in sizes]
+        print("INFO: Need {} GB for layer activations.\n".format(size_str))
+
+        # Percentile to use for threshold clipping.
+        activation_percentile = self.config.getfloat(
+            'normalization', 'activation_percentile', fallback=99.999)
+
+        # Input should already be normalized, but do it again just for safety.
+        x = x_norm / np.max(x_norm)
+
+        # Init param scale
+        input_scale = 127 if self.signed_input else 255
+        param_scale = input_scale
+
+        # Convert input to integers.
+        dvdt = x * input_scale
+
+        spikerates = None
+
+        param_scales = {}
+        slopes = {}
+        thresh_mants = {}
+        thresh_exps = {}
+
+        # Make a copy of the model so we can safely modify weights.
+        snn_emulation = keras.models.clone_model(self.parsed_model)
+        snn_emulation.set_weights(self.parsed_model.get_weights())
+
+        # Want to optimize threshold while keeping weights and biases in given
+        # limits.
+        for i, layer in enumerate(snn_emulation.layers):
+            name = layer.name
+            print(name)
+
+            prev_name = snn_emulation.layers[i - 1].name
+            prev_param_scale = param_scales.get(prev_name, 1)
+            prev_thresh_mant = thresh_mants.get(prev_name, 1)
+            prev_thresh_exp = thresh_exps.get(prev_name)
+            prev_slope = slopes.get(prev_name, 1)
+
+            # Skip for layers without parameters.
+            # Input, AveragePooling
+            if len(layer.weights) > 0:
+                # Unconstrained floats
+                weights, biases = layer.get_weights()
+
+                if self.plot_histograms:
+                    filename = 'hist_{}_real'.format(layer.name)
+                    plot_parameter_histogram(self._logdir, filename, weights,
+                                             biases)
+
+                # Scale biases to compensate for previous layer threshold
+                # scaling.
+                biases = biases * prev_slope
+
+                param_scale = self.get_parameter_scale(weights, biases)
                 param_scales[name] = param_scale
-                dvdt = dvdt * param_scale
+                print("Parameter scale: {}".format(param_scale))
 
-        # The highest EPSP determines whether to raise threshold.
-        dvdt_max = get_scale_fac(dvdt[np.nonzero(dvdt)], activation_percentile)
-        print("Maximum increase in compartment voltage per timestep: {}."
-              "".format(int(dvdt_max)))
+                # Quantize weights.
+                weights = to_int(weights, param_scale, self.num_weight_bits)
 
-        dvdt_max *= desired_threshold_to_input_ratio
+                # Quantize biases.
+                biases = to_int(biases, param_scale, self.num_bias_bits)
 
-        # Calculate the thresh_mant and exponent.
-        thresh_mant, thresh_exp = to_mantexp(
-            dvdt_max, 2**num_weight_bits, W_EXP_MAX)
-        assert thresh_exp <= W_EXP_MAX
-        assert thresh_mant <= 2**8
-        threshold = thresh_mant * 2**thresh_exp
+                if self.plot_histograms:
+                    filename = 'hist_{}_int'.format(layer.name)
+                    plot_parameter_histogram(self._logdir, filename, weights,
+                                             biases)
 
-        # Compute slope
-        slope = param_scale * prev_slope / threshold
+                # Softmax layers in Loihi use no threshold.
+                if (hasattr(layer, 'activation') and
+                        layer.activation.__name__ == 'softmax'):
+                    continue
 
-        # Compute new slope for saturating activations.
-        # Todo : Enable saturating activations in snntoolbox.
-        # The snntoolbox does not support saturating activations.
-        # ReLU layers are removed. Instead, we add a custom activation to
-        # the parsed model layers.
-        if saturation:
-            # If using saturation activations the slope is at most
-            # the inverse of the saturation value.
-            new_slope = 1 / saturation
+                # Apply weight changes to layer, so we can estimate PSP. Note
+                # that we do not apply the bias exponent here; this method
+                # assumes (and asserts above) that the bias exponent is 6 to
+                # cancel out with the fix weight and threshold gain of 2 ** 6
+                # applied by Loihi.
+                layer.set_weights([weights, biases])
 
-            # Compute new threshold estimate
-            new_threshold = param_scale * prev_slope / new_slope
+            if i > 0:
+                # Get excitatory post-synaptic potential for each neuron.
+                dvdt = keras.models.Sequential([layer]).predict(spikerates)
 
-            # The threshold is updated if the new threshold is lower.
-            if new_threshold < threshold:
-                print("Update previous slope {} with new slope {} based "
-                      "on saturating activation value of {}.".format(
-                        slope, new_slope, saturation))
-                thresh_mant, thresh_exp = to_mantexp(
-                    new_threshold, 2**num_weight_bits, W_EXP_MAX)
-                threshold = thresh_mant * 2 ** thresh_exp
-                slope = new_slope
+                # Layers like Flatten do not have spiking neurons and therefore
+                # no threshold to tune. So we only need to update the input to
+                # the next layer, and propagate the scale.
+                if not is_spiking(layer, self.config):
+                    spikerates = dvdt
+                    param_scales[name] = prev_param_scale
+                    thresh_exps[name] = prev_thresh_exp
+                    thresh_mants[name] = prev_thresh_mant
+                    slopes[name] = prev_slope
+                    continue
 
-        slopes[name] = slope
+                # Loihi AveragePooling layers get weights of ones. To reproduce
+                # this in our Keras model, we need to apply the same
+                # transformations as for a regular layer that has weights:
+                # 1. Integer transformation, 2. Undoing integer trafo of
+                # previous layer, 3. Multiplying by threshold to go from rates
+                # to voltage change.
+                elif 'AveragePooling' in get_type(layer):
+                    weight_norm = 1 / np.prod(layer.pool_size)
+                    param_scale = self.W_MAX / weight_norm
+                    param_scales[name] = param_scale
+                    dvdt = dvdt * param_scale
 
-        print("Setting threshold of layer {} to {} and scaling biases "
-              "of subsequent layer by {}".format(name, threshold, slope))
+            # The highest EPSP determines whether to raise threshold.
+            dvdt_max = get_scale_fac(dvdt[np.nonzero(dvdt)],
+                                     activation_percentile)
+            print("Maximum increase in compartment voltage per timestep: {}."
+                  "".format(int(dvdt_max)))
 
-        thresh_mants[name] = thresh_mant
-        thresh_exps[name] = thresh_exp
+            dvdt_max *= self.desired_threshold_to_input_ratio
 
-        if reset_mode == 'soft':
-            print('Weight mantissa and exponent for subtractive-reset are'
-                  ' {} and {}, respectively'.format(thresh_mant, thresh_exp))
+            # Calculate the thresh_mant and exponent.
+            thresh_mant, thresh_exp = to_mantexp(
+                dvdt_max, 2**self.num_weight_bits, W_EXP_MAX)
+            assert thresh_exp <= W_EXP_MAX
+            assert thresh_mant <= 2**8
+            threshold = thresh_mant * 2**thresh_exp
 
-        # Apply activation function (dividing by threshold) to obtain the
-        # output of the current layer, which will be used as input to the next.
-        spikerates = np.minimum(dvdt / threshold, 1)
-        print('\n')
+            # Compute slope
+            slope = param_scale * prev_slope / threshold
 
-    print("Done scaling thresholds.\n")
+            # Compute new slope for saturating activations.
+            if self.saturation:
+                # If using saturation activations the slope is at most the
+                # inverse of the saturation value.
+                new_slope = 1 / self.saturation
 
-    return param_scales, slopes, thresh_mants, thresh_exps
+                # Compute new threshold estimate
+                new_threshold = param_scale * prev_slope / new_slope
+
+                # The threshold is updated if the new threshold is lower.
+                if new_threshold < threshold:
+                    print("Update previous slope {} with new slope {} based "
+                          "on saturating activation value of {}.".format(
+                            slope, new_slope, self.saturation))
+                    thresh_mant, thresh_exp = to_mantexp(
+                        new_threshold, 2**self.num_weight_bits, W_EXP_MAX)
+                    threshold = thresh_mant * 2 ** thresh_exp
+                    slope = new_slope
+
+            slopes[name] = slope
+
+            print("Setting threshold of layer {} to {} and scaling biases "
+                  "of subsequent layer by {}".format(name, threshold, slope))
+
+            thresh_mants[name] = thresh_mant
+            thresh_exps[name] = thresh_exp
+
+            if self.reset_mode == 'soft':
+                print('Weight mantissa and exponent for subtractive-reset are'
+                      ' {} and {}, respectively'.format(thresh_mant,
+                                                        thresh_exp))
+
+            # Apply activation function (dividing by threshold) to obtain the
+            # output of the current layer, which will be used as input to the
+            # next.
+            spikerates = np.minimum(dvdt / threshold, 1)
+            print('\n')
+
+        print("Done scaling thresholds.\n")
+
+        return param_scales, slopes, thresh_mants, thresh_exps
+
+    def get_parameter_scale(self, weights, biases):
+        param_percentile = self.config.getfloat(
+            'normalization', 'param_percentile', fallback=100)
+
+        # Instead of using the maximum parameter for normalization, we may
+        # choose the value at a certain percentile to clip outliers.
+        weight_norm = np.percentile(np.abs(weights.ravel()), param_percentile)
+        scale_ratio = np.percentile(np.abs(biases) / weight_norm,
+                                    param_percentile)
+
+        if scale_ratio > 0:
+            return np.min([self.W_MAX, self.b_MAX / scale_ratio]) / weight_norm
+
+        return self.W_MAX / weight_norm
 
 
 def check_q_overflow(weights, p):
@@ -1535,9 +1409,11 @@ def get_spiking_output_layer(layers, config):
 
 
 def apply_softmax(x, axis=1):
-    """If output layer has softmax activation function, we probe the voltage
-    instead of spikes, apply the softmax on the voltages here, and
-    encode the result in spikes.
+    """Apply softmax to voltages of output layer.
+
+    If output layer has softmax activation function, we probe the voltage
+    instead of spikes, apply the softmax on the voltages here, and encode the
+    result in spikes.
     """
 
     e = np.exp(x - np.max(x, axis, keepdims=True))
@@ -1547,37 +1423,25 @@ def apply_softmax(x, axis=1):
     return z < y
 
 
-def to_integer(weights, biases, bitwidth, norm=None):
-    if norm is None:
-        norm = get_max_param(weights, biases)
-
-    a_min = - 2 ** bitwidth
-    a_max = - a_min - 1
-    weights = np.clip(weights / norm * a_max, a_min, a_max).astype(int)
-    biases = np.clip(biases / norm * a_max, a_min, a_max).astype(int)
-    return weights, biases
-
-
-def get_max_param(weights, biases):
-    return np.max(np.abs(np.concatenate([weights, biases], None)))
-
-
 def apply_modifications(model, custom_objects=None):
-    """
-    Applies modifications to the model layers by saving and loading. Used for
-    rebuilding after modification of saturation activations.
-    :param Model model:
-        Modified keras model.
+    """Apply modifications to the model layers by saving and loading.
+
+    Used for rebuilding after modification of saturation activations.
+
+    :param Model model: Modified keras model.
     :param dict custom_objects: Dictionary of custom objects.
-    :return :
-        The modified model.
+    :return: The modified model.
     """
 
-    model_path = os.path.join(tempfile.gettempdir(),
-                              next(tempfile._get_candidate_names()) + '.h5')
+    model_path = os.path.join(tempfile.gettempdir(), str(hash(model)) + '.h5')
     try:
         model.save(model_path)
         return keras.models.load_model(model_path,
                                        custom_objects=custom_objects)
     finally:
         os.remove(model_path)
+
+
+def to_int(value, scale, num_bits):
+    return np.clip(np.round(value * scale),
+                   -2 ** num_bits, 2 ** num_bits - 1).astype(int)
