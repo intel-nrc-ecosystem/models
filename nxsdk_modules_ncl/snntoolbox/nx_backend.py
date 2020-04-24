@@ -104,10 +104,6 @@ class SNN(AbstractSNN):
         self.probe_energy = self.config.getboolean(
             'loihi', 'probe_energy', fallback=False)
 
-        # Configure board dumping
-        self.do_dump_load = self.config.getboolean(
-            'loihi', 'do_dump_load', fallback=False)
-
         self.clamp_layers = self.config.getboolean('loihi', 'clamp_layers',
                                                    fallback=False)
 
@@ -454,16 +450,15 @@ class SNN(AbstractSNN):
         path_models = os.path.join(self._logdir, 'model_dumps', 'runnables')
 
         # Try to load board from disk.
+        print("Trying to load board from {}.".format(path_models))
         try:
-            assert self.do_dump_load
-            print("Trying to load board from {}.".format(path_models))
             self.composed_snn = ComposableModel.load(path_models)
             self.snn = self.composed_snn.composables.dnn
+        except OSError:
+            print("Could not load board.")
 
         # Otherwise, compile model again, possibly using intermediate results.
-        except (OSError, AssertionError):
-
-            print("Could not load board.")
+        if self.composed_snn is None:
             self.snn = self.get_model()
             self.snn.summary()
 
@@ -477,8 +472,7 @@ class SNN(AbstractSNN):
             print("numChips: {}\nnumCoresPerChip: {}\nnumCores: {}".format(
                 numChips, numCores, np.sum(numCores)))
 
-            if self.do_dump_load:
-                self.try_saving_composable(path_models)
+            self.try_saving_composable(path_models)
 
         # Set up probes.
         self.set_vars_to_record()
@@ -1023,10 +1017,19 @@ class SNN(AbstractSNN):
 
         print("Saving NxModel and board to {}.".format(path))
         try:
-            self.composed_snn.save(path)
-        except NotImplementedError as e:
-            print("Could not save composable model (method not implemented).\n"
-                  "{}".format(e))
+            # Todo: There are two issues here: 1. The ComposableDNN.save method
+            #       is not yet implemented. 2. Parts of the Composable.save
+            #       method are implemented, but calling the save method in this
+            #       try clause results in a deadlock during board.run().
+            #       So we skip this here.
+            # self.composed_snn.save(path)
+            raise NotImplementedError
+        except NotImplementedError:
+            print("Could not save composable model (method not implemented).")
+            # If we don't call self.composed_snn.save(path), the dump folder
+            # does not get created and we have to do it here.
+            # Todo: Remove once we can call save function above.
+            os.makedirs(path)
         self.snn.save(os.path.join(path, 'nxModel.h5'))
 
     def compose_with_input_generator(self):
@@ -1042,8 +1045,8 @@ class SNN(AbstractSNN):
                       "must be at least as long as the clamping duration " \
                       "({}) times the number of layers ({}). Reduced the " \
                       "clamp duration to {}.".format(
-                    self._duration, self.clamp_duration, num_layers,
-                    new_clamp_duration)
+                        self._duration, self.clamp_duration, num_layers,
+                        new_clamp_duration)
                 msg2 = "\nNew clamp duration is either too small or does " \
                        "not evenly divide the total runtime per sample."
                 assert new_clamp_duration > 1
