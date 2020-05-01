@@ -506,7 +506,7 @@ class SNN(AbstractSNN):
                 self.composed_snn.run(self.clamp_duration, **run_kwargs)
                 self.set_inputs(kwargs[str('x_b_l')])
                 outputs.append(self.get_spiketrains_output()[..., -1])
-                self.snn.board.finishRun()
+                self.composed_snn.finishRun()  # Todo: Move out of loop?
             if remainder:
                 # self.composed_snn.run(remainder, **run_kwargs)
                 raise NotImplementedError
@@ -515,7 +515,10 @@ class SNN(AbstractSNN):
         else:
             self.composed_snn.run(batch_duration, **run_kwargs)
             self.set_inputs(kwargs[str('x_b_l')])
-            self.snn.board.finishRun()
+
+            output_b_l_t = self.get_recorded_vars(self.snn.layers)
+
+            self.composed_snn.finishRun()
 
             if self._execution_time_probe is not None:
                 plot_execution_time_probe(self._logdir,
@@ -523,8 +526,6 @@ class SNN(AbstractSNN):
             print("\nCollecting results...")
             if self._energy_probe is not None:
                 plot_energy_probe(self._logdir, self._energy_probe)
-
-            output_b_l_t = self.get_recorded_vars(self.snn.layers)
 
         return output_b_l_t
 
