@@ -23,7 +23,7 @@ import warnings
 import tempfile
 
 import numpy as np
-import keras
+from tensorflow import keras
 
 import nxsdk_modules_ncl.dnn.src.dnn_layers as nxtf
 from nxsdk.graph.nxboard import N2Board
@@ -283,7 +283,7 @@ class SNN(AbstractSNN):
 
         if self.do_probe_spikes:
             compartment_kwargs['probeSpikes'] = True
-        input_layer = nxtf.NxInputLayer(batch_input_shape=input_shape,
+        input_layer = nxtf.NxInputLayer(input_shape[1:], input_shape[0],
                                         **layer_kwargs, **compartment_kwargs)
 
         maxNumCompartments = self.config.getint(
@@ -1063,7 +1063,7 @@ class SNN(AbstractSNN):
 
         # Configure input generator to stream images via channels from super
         # host to Loihi. Use batch size 1 regardless of actual batch size.
-        shape = (1,) + tuple(self.snn.layers[0].input_shape[1:])
+        shape = (1,) + tuple(self.snn.input_shape[1:])
         input_generator = InputGenerator(shape, interval=interval,
                                          numSnipsPerChip=3)
         input_generator.name = 'input'

@@ -27,17 +27,16 @@ from enum import IntEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
-from keras.engine import InputLayer
-from keras.layers import Conv2D, DepthwiseConv2D, Dense, AveragePooling2D, \
-    Flatten, Conv1D, ZeroPadding2D, Reshape
-from keras.models import Model, load_model
+from tensorflow.keras.layers import Conv2D, DepthwiseConv2D, Dense, \
+    AveragePooling2D, Flatten, Conv1D, ZeroPadding2D, Reshape, InputLayer
+from tensorflow.keras.models import Model, load_model
 from scipy.sparse import lil_matrix, load_npz, save_npz
 
 # Import plotting modules first to ensure plt backend is set correctly.
-from nxsdk_modules_ncl.dnn.src.plotting import plot_multiplicity, plot_coreIdMap, \
-    plot_core_occupancy, plot_layer_partition, plot_core_utilization, \
-    plot_exclusion_criteria_hit_count, visualize_partitions, plot_cost_graph, \
-    plot_cost_terms, plot_cx_syn
+from nxsdk_modules_ncl.dnn.src.plotting import plot_multiplicity, \
+    plot_coreIdMap, plot_core_occupancy, plot_layer_partition, \
+    plot_core_utilization, plot_exclusion_criteria_hit_count, \
+    visualize_partitions, plot_cost_graph, plot_cost_terms, plot_cx_syn
 from nxsdk_modules_ncl.dnn.src.data_structures import Layer, Partition, \
     SynapseGroup, OutputAxonGroup, CompartmentGroup, InputAxonGroup, \
     serializeLayer, deserializeLayer
@@ -72,6 +71,18 @@ SOFT_RESET_LAYERS = {'NxConv2D', 'NxInputLayer', 'NxConv1D',
                      'NxDense'}
 
 CxAddr = collections.namedtuple('CxAddr', ['chipId', 'coreId', 'cxId'])
+
+
+def fix_input_layer_shape(shape):
+    """
+    tf.keras.models.load_model function introduced a bug that wraps the input
+    tensors and shapes in a single-entry list, i.e.
+    output_shape == [(None, 1, 28, 28)]. Thus we have to apply [0] here.
+    """
+
+    if len(shape) == 1:
+        return shape[0]
+    return shape
 
 
 def removeNxKwargs(kwargs):
@@ -304,7 +315,10 @@ def compileConvlike(self, partitionCandidate):
     # is doubled.
     signedInput = False
     if len(self._inbound_nodes[:1]):
-        layer = self._inbound_nodes[0].inbound_layers[0]
+        layer = self._inbound_nodes[0].inbound_layers
+        # layer may be wrapped in a list of lenght 1:
+        if isinstance(layer, (list, tuple)):
+            layer = layer[0]
         if hasattr(layer, 'signed'):
             if layer.signed:
                 signedInput = True
@@ -1231,7 +1245,7 @@ class NxConv2D(NxLayer, Conv2D):
     def build(self, input_shape):
         Conv2D.build(self, input_shape)
 
-        self._padding = _getPadding(input_shape[1:], self.padding,
+        self._padding = _getPadding(input_shape.as_list()[1:], self.padding,
                                     self.kernel_size, self.strides,
                                     self.dilation_rate)
 
@@ -1240,7 +1254,10 @@ class NxConv2D(NxLayer, Conv2D):
         # When using signed spikes the number of channels in the input
         # is doubled.
         if len(self._inbound_nodes[:1]):
-            layer = self._inbound_nodes[0].inbound_layers[0]
+            layer = self._inbound_nodes[0].inbound_layers
+            # layer may be wrapped in a list of lenght 1:
+            if isinstance(layer, (list, tuple)):
+                layer = layer[0]
             if hasattr(layer, 'signed'):
                 if layer.signed:
                     inputShape = inputShape[:-1] + (2 * inputShape[-1],)
@@ -1381,7 +1398,7 @@ class NxConv1D(NxLayer, Conv1D):
     def build(self, input_shape):
         Conv1D.build(self, input_shape)
 
-        self._input_shape3D = (input_shape[1], 1, input_shape[2])
+        self._input_shape3D = (int(input_shape[1]), 1, int(input_shape[2]))
         self._kernel_shape2D = (self.kernel_size[0], 1)
         self._strides2D = (self.strides[0], 1)
         self._dilation_rate2D = (self.dilation_rate[0], 1)
@@ -1525,7 +1542,7 @@ class NxDepthwiseConv2D(NxLayer, DepthwiseConv2D):
     def build(self, input_shape):
         DepthwiseConv2D.build(self, input_shape)
 
-        self._padding = _getPadding(input_shape[1:], self.padding,
+        self._padding = _getPadding(input_shape.as_list()[1:], self.padding,
                                     self.kernel_size, self.strides,
                                     self.dilation_rate)
 
@@ -1636,13 +1653,14 @@ class NxAveragePooling2D(NxLayer, AveragePooling2D):
         return config
 
     def build(self, input_shape):
-        self._padding = _getPadding(input_shape[1:], self.padding,
+        input_shape_list = input_shape.as_list()
+        self._padding = _getPadding(input_shape_list[1:], self.padding,
                                     self.pool_size, self.strides, (1, 1))
 
-        output_shape = self.compute_output_shape(input_shape)
+        output_shape = self.compute_output_shape(input_shape_list)
 
         # Add weights and biases.
-        inChannels = input_shape[-1]
+        inChannels = input_shape_list[-1]
         outChannels = output_shape[-1]
         weightShape = self.pool_size + (inChannels, outChannels)
         self.add_weight('W', weightShape, initializer='ones', trainable=False)
@@ -1807,7 +1825,10 @@ class NxDense(NxLayer, Dense):
         weights, biases = self.get_weights()
 
         if len(self._inbound_nodes):
-            prevLayer = self._inbound_nodes[0].inbound_layers[0]
+            prevLayer = self._inbound_nodes[0].inbound_layers
+            # prevLayer may be wrapped in a list of lenght 1:
+            if isinstance(prevLayer, (list, tuple)):
+                prevLayer = prevLayer[0]
             if 'Flatten' in prevLayer.__class__.__name__:
                 shape = prevLayer.input_shape[1:]
                 idxs = np.arange(int(np.prod(shape)))
@@ -2046,9 +2067,8 @@ class NxDense(NxLayer, Dense):
 class NxInputLayer(NxLayer, InputLayer):
     """Input layer for Loihi DNNs."""
 
-    def __init__(self, input_shape=None, batch_size=None,
-                 batch_input_shape=None, biasExp=None, vThMant=None,
-                 visualizePartitions=None, logger=None,
+    def __init__(self, input_shape=None, batch_size=None, biasExp=None,
+                 vThMant=None, visualizePartitions=None, logger=None,
                  signed=False, **kwargs):
 
         NxLayer.__init__(self, biasExp=biasExp, vThMant=vThMant,
@@ -2060,8 +2080,7 @@ class NxInputLayer(NxLayer, InputLayer):
 
         kwargs = removeNxKwargs(kwargs)
 
-        InputLayer.__init__(self, input_shape, batch_size, batch_input_shape,
-                            **kwargs)
+        InputLayer.__init__(self, input_shape, batch_size, **kwargs)
 
     def get_config(self):
         config = {'signed': self._signed}
@@ -2082,7 +2101,7 @@ class NxInputLayer(NxLayer, InputLayer):
             particular array of candidates.
         :rtype: dict
         """
-        outputShape = self.output_shape[1:]
+        outputShape = fix_input_layer_shape(self.output_shape)[1:]
 
         # When using signed spikes the number of channels in the output
         # is doubled.
@@ -2105,7 +2124,7 @@ class NxInputLayer(NxLayer, InputLayer):
         """
 
         # Compute shape for signed input.
-        outputShape = self.output_shape[1:]
+        outputShape = fix_input_layer_shape(self.output_shape)[1:]
 
         # When using signed spikes the number of channels in the output
         # is doubled.
