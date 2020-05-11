@@ -2082,6 +2082,12 @@ class NxInputLayer(NxLayer, InputLayer):
 
         InputLayer.__init__(self, input_shape, batch_size, **kwargs)
 
+    @property
+    def output_shape(self):
+        shape = super(NxInputLayer, self).output_shape
+        if shape is not None:
+            return fix_input_layer_shape(shape)
+
     def get_config(self):
         config = {'signed': self._signed}
         baseConfig = InputLayer.get_config(self)
@@ -2101,7 +2107,7 @@ class NxInputLayer(NxLayer, InputLayer):
             particular array of candidates.
         :rtype: dict
         """
-        outputShape = fix_input_layer_shape(self.output_shape)[1:]
+        outputShape = self.output_shape[1:]
 
         # When using signed spikes the number of channels in the output
         # is doubled.
@@ -2124,7 +2130,7 @@ class NxInputLayer(NxLayer, InputLayer):
         """
 
         # Compute shape for signed input.
-        outputShape = fix_input_layer_shape(self.output_shape)[1:]
+        outputShape = self.output_shape[1:]
 
         # When using signed spikes the number of channels in the output
         # is doubled.
