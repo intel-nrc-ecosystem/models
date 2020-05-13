@@ -264,12 +264,11 @@ class SNN(AbstractSNN):
             raise NotImplementedError
 
         name = self.parsed_model.layers[0].name
-        layer_kwargs = {}
+        layer_kwargs = {'signed': self.signed_input,
+                        'resetMode': self.reset_mode,
+                        'name': name}
         compartment_kwargs = eval(self.config.get('loihi',
                                                   'compartment_kwargs'))
-
-        # Check if input layer uses signed spikes.
-        layer_kwargs['signed'] = self.signed_input
 
         if self.normalize_thresholds:
             vThMant = self.thresh_mants[name]
@@ -277,9 +276,6 @@ class SNN(AbstractSNN):
             compartment_kwargs['vThMant'] = int(vThMant * 2 ** vThExp)
         else:
             compartment_kwargs['vThMant'] = 127 if self.signed_input else 255
-
-        # Check for soft-reset.
-        layer_kwargs.update({'resetMode': self.reset_mode})
 
         if self.do_probe_spikes:
             compartment_kwargs['probeSpikes'] = True
