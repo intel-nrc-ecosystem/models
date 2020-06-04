@@ -1406,6 +1406,46 @@ class NxConv1D(NxLayer, Conv1D):
                                       self._kernel_shape2D, self._strides2D,
                                       self._dilation_rate2D)
 
+    def call(self, inputs):
+        # The only reason we need to override the call method is because the
+        # class name 'NxConv1D' would be falsely missed in the condition
+        # if self.padding == 'causal' and self.__class__.__name__ == 'Conv1D':
+        # below.
+        from tensorflow.python.ops import array_ops
+        from tensorflow.python.ops import nn
+        from tensorflow.python.ops import nn_ops
+
+        if self._recreate_conv_op(inputs):
+            self._convolution_op = nn_ops.Convolution(
+                inputs.get_shape(),
+                filter_shape=self.kernel.shape,
+                dilation_rate=self.dilation_rate,
+                strides=self.strides,
+                padding=self._padding_op,
+                data_format=self._conv_op_data_format)
+
+        # Apply causal padding to inputs for Conv1D.
+        if self.padding == 'causal' and 'Conv1D' in self.__class__.__name__:
+            inputs = array_ops.pad(inputs, self._compute_causal_padding())
+
+        outputs = self._convolution_op(inputs, self.kernel)
+
+        if self.use_bias:
+            if self.data_format == 'channels_first':
+                if self.rank == 1:
+                    # nn.bias_add does not accept a 1D input tensor.
+                    bias = array_ops.reshape(self.bias, (1, self.filters, 1))
+                    outputs += bias
+                else:
+                    outputs = nn.bias_add(outputs, self.bias,
+                                          data_format='NCHW')
+            else:
+                outputs = nn.bias_add(outputs, self.bias, data_format='NHWC')
+
+        if self.activation is not None:
+            return self.activation(outputs)
+        return outputs
+
     def genKernelIdMap(self):
         output_shape3D = (self.output_shape[1], 1, self.output_shape[2])
         return _genKernelIdMap(self._input_shape3D, output_shape3D,

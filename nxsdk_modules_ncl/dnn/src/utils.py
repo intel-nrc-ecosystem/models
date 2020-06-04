@@ -177,7 +177,9 @@ def _getPadding(inputShape, padding, kernelShape, strides, dilation,
         if inbound.__class__.__name__ == 'ZeroPadding2D':
             ((py0, py1), (px0, px1)) = inbound.padding
 
-    if padding == 'same':
+    if padding == 'valid':
+        pass
+    elif padding == 'same':
         height, width = inputShape[:-1]
         ky, kx = kernelShape
         sy, sx = strides
@@ -191,6 +193,10 @@ def _getPadding(inputShape, padding, kernelShape, strides, dilation,
         px0 = px1 = int(qx)
         if qx % 1 and kx > 1:
             px1 += 1
+    elif padding == 'causal':
+        py0 = dilation[0] * (kernelShape[0] - 1)
+    else:
+        raise NotImplementedError
 
     return py0, py1, px0, px1
 
