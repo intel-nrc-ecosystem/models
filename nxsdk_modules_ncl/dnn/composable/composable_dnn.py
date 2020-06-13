@@ -37,18 +37,19 @@ from nxsdk_modules_ncl.dnn.src.dnn_layers import ProbableStates
 
 class ComposableDNN(AbstractComposable):
     """A DNN that is composable. See nxsdk_modules_ncl.dnn.src.dnn_layers.NxModel which is the underlying DNN Model"""
-    def __init__(self, model: 'NxModel', num_steps_per_img: int):
+    def __init__(self, model: 'NxModel', num_steps_per_img: int, enable_reset: bool = True):
         """
         Wraps a DNNModel and makes it composable
 
         :param model (nxsdk_modules_ncl.dnn.src.dnn_layers.NxModel): The underlying DNN Model created from NxTF Layers
         :param num_steps_per_img: Number of steps to run for each image
+        :param enable_reset: Whether to reset states after ``num_steps_per_img``.
         """
         super().__init__()
 
         self._logger = get_logger("NET.DNN")
 
-        self._build(model=model, num_steps_per_img=num_steps_per_img)
+        self._build(model=model, num_steps_per_img=num_steps_per_img, enableReset=enable_reset)
 
     def _build(self, *args, **kwargs):
         """Builds the ports, probes and snips for the composable. This method is called from base class constructor"""
@@ -57,6 +58,7 @@ class ComposableDNN(AbstractComposable):
         self._addPorts()
         self._addProcesses()
         self._num_steps_per_img = kwargs["num_steps_per_img"]
+        self._enableReset = kwargs['enableReset']
 
     def _addPorts(self):
         """Adds ports to the composable"""
@@ -283,4 +285,4 @@ class ComposableDNN(AbstractComposable):
         num_cores_per_chip = [board.n2Chips[i].numCores for i in range(board.numChips)]
         for chip_id in range(board.numChips):
             name = 'channel_init_ch{}_lmt0'.format(chip_id)
-            getattr(self, name).write(3, [num_cores_per_chip[chip_id], self._num_steps_per_img, 1])
+            getattr(self, name).write(3, [num_cores_per_chip[chip_id], self._num_steps_per_img, self._enableReset])
