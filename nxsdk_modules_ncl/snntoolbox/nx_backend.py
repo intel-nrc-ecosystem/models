@@ -530,6 +530,11 @@ class SNN(AbstractSNN):
             self.composed_snn.run(batch_duration, **run_kwargs)
             self.set_inputs(x_b_l)
 
+            # This call has to happen before trying to read out probes,
+            # otherwise their data array will be empty.
+            self.composed_snn.finishRun()
+
+            print("\nCollecting results...")
             output_b_l_t = self.get_recorded_vars(self.snn.layers)
 
         return output_b_l_t
@@ -547,9 +552,6 @@ class SNN(AbstractSNN):
     def end_sim(self):
         """Clean up after run."""
 
-        self.composed_snn.finishRun()
-
-        print("\nCollecting results...")
         if self._execution_time_probe is not None:
             plot_execution_time_probe(self._logdir,
                                       self._execution_time_probe)
@@ -1431,30 +1433,30 @@ class SNN(AbstractSNN):
         ratio_io = time_io * num_steps_io / total_time
         ratio_spiking = time_spiking * num_steps_spiking / total_time
 
-        print("Time per sample: {:.2f} ms".format(time_per_sample / 1e3))
-        print("Frames per second: {:.2f} Hz".format(fps))
-        print("Avg. time per step: {:.2f} ms".format(
+        print("Time per sample: {:.4f} ms".format(time_per_sample / 1e3))
+        print("Frames per second: {:.4f} Hz".format(fps))
+        print("Avg. time per step: {:.4f} ms".format(
             time_per_sample / num_steps_per_sample / 1e3))
         print("Buffer:")
-        print("\tAvg. time per step: {:.2f} ms.".format(time_buffer / 1e3))
+        print("\tAvg. time per step: {:.4f} ms.".format(time_buffer / 1e3))
         print("\tAccounts for {:.2%} of total execution time.".format(
             ratio_buffer))
         print("\tOccurs with a frequency of {:.2%}.".format(
             num_steps_buffer / num_steps))
         print("IO:")
-        print("\tAvg. time per step: {:.2f} ms.".format(time_io / 1e3))
+        print("\tAvg. time per step: {:.4f} ms.".format(time_io / 1e3))
         print("\tAccounts for {:.2%} of total execution time.".format(
             ratio_io))
         print("\tOccurs with a frequency of {:.2%}.".format(
             num_steps_io / num_steps))
         print("Host:")
-        print("\tAvg. time per step: {:.2f} ms.".format(time_host / 1e3))
+        print("\tAvg. time per step: {:.4f} ms.".format(time_host / 1e3))
         print("\tAccounts for {:.2%} of total execution time.".format(
             ratio_host))
         print("\tOccurs with a frequency of {:.2%}.".format(
             num_steps_host / num_steps))
         print("Spiking:")
-        print("\tAvg. time per step: {:.2f} ms.".format(time_spiking / 1e3))
+        print("\tAvg. time per step: {:.4f} ms.".format(time_spiking / 1e3))
         print("\tAccounts for {:.2%} of total execution time.".format(
             ratio_spiking))
         print("\tOccurs with a frequency of {:.2%}.".format(
@@ -1473,18 +1475,18 @@ class SNN(AbstractSNN):
         else:
             power_dynamic = power_active * ratio_spiking
 
-        print("Idle power: {:.2f} mW".format(power_idle))
-        print("Active power: {:.2f} mW".format(power_active))
-        print("Idle power per core: {:.2f} mW".format(
+        print("Idle power: {:.4f} mW".format(power_idle))
+        print("Active power: {:.4f} mW".format(power_active))
+        print("Idle power per core: {:.4f} mW".format(
             power_idle / num_cores_used))
-        print("Dynamic power per core: {:.2f} mW".format(
+        print("Dynamic power per core: {:.4f} mW".format(
             power_dynamic / num_cores_used))
-        print("Dynamic energy per sample: {:.2f} mJ".format(
+        print("Dynamic energy per sample: {:.4f} mJ".format(
             power_dynamic / fps))
-        print("Total energy per sample: {:.2f} mJ".format(
+        print("Total energy per sample: {:.4f} mJ".format(
             (power_idle + power_dynamic) / fps))
 
-        print("EDP: {:.2f}".format(
+        print("EDP: {:.4f}".format(
             (power_idle + power_dynamic) * time_per_sample ** 2 / 1e15))
 
 
