@@ -37,8 +37,8 @@ from nxsdk_modules_ncl.dnn.composable.composable_dnn import ComposableDNN
 from snntoolbox.parsing.utils import get_type
 from snntoolbox.conversion.utils import get_scale_fac
 from snntoolbox.simulation.utils import AbstractSNN, is_spiking
-from snntoolbox.simulation.plotting import plot_probe, \
-    plot_execution_time_probe, plot_energy_probe, plot_parameter_histogram
+from snntoolbox.simulation.plotting import plot_probe, plot_energy_probe, \
+    plot_execution_time_probe, plot_power_probe, plot_parameter_histogram
 from snntoolbox.utils.utils import ClampedReLU
 
 
@@ -95,6 +95,11 @@ class SNN(AbstractSNN):
                                                fallback='')
         self._execution_time_probe = None
         self._energy_probe = None
+        # Buffer size should not be a multiple of the run time. Otherwise the
+        # io power reading at the beginning of a run will be disturbed.
+        self._buffer_size = 4095  # self._duration * 2 + 11
+        self._bin_size = self._duration // 20
+        self.num_samples = self.config.getint('simulation', 'num_to_test')
         self.normalize_thresholds = self.config.getboolean(
             'loihi', 'normalize_thresholds', fallback=True)
 
@@ -493,6 +498,19 @@ class SNN(AbstractSNN):
         run_kwargs = {'aSync': True}
         batch_duration = self._duration * self.batch_size
 
+        if self._is_aedat_input:
+            dvs_gen = kwargs['dvs_gen']
+            x_b_l = []
+            for _ in range(self._duration):
+                x_b_l.append(dvs_gen.next_eventframe_batch())
+            x_b_l = np.stack(x_b_l, 1)
+            remaining_events = dvs_gen.remaining_events_of_current_batch()
+            if remaining_events:
+                print("{} events were not processed. Consider increasing the "
+                      "simulation duration.".format(remaining_events))
+        else:
+            x_b_l = kwargs['x_b_l']
+
         if self.clamp_layers:
             num_intervals, remainder = divmod(batch_duration,
                                               self.clamp_duration)
@@ -500,7 +518,7 @@ class SNN(AbstractSNN):
             for i in range(num_intervals):
                 self.apply_clamp(i)
                 self.composed_snn.run(self.clamp_duration, **run_kwargs)
-                self.set_inputs(kwargs[str('x_b_l')])
+                self.set_inputs(x_b_l)
                 outputs.append(self.get_spiketrains_output()[..., -1])
                 self.composed_snn.finishRun()  # Todo: Move out of loop?
             if remainder:
@@ -510,16 +528,7 @@ class SNN(AbstractSNN):
             output_b_l_t = np.repeat(output_b_l, self.clamp_duration, -1)
         else:
             self.composed_snn.run(batch_duration, **run_kwargs)
-            self.set_inputs(kwargs[str('x_b_l')])
-
-            self.composed_snn.finishRun()
-
-            if self._execution_time_probe is not None:
-                plot_execution_time_probe(self._logdir,
-                                          self._execution_time_probe)
-            print("\nCollecting results...")
-            if self._energy_probe is not None:
-                plot_energy_probe(self._logdir, self._energy_probe)
+            self.set_inputs(x_b_l)
 
             output_b_l_t = self.get_recorded_vars(self.snn.layers)
 
@@ -537,6 +546,17 @@ class SNN(AbstractSNN):
 
     def end_sim(self):
         """Clean up after run."""
+
+        self.composed_snn.finishRun()
+
+        print("\nCollecting results...")
+        if self._execution_time_probe is not None:
+            plot_execution_time_probe(self._logdir,
+                                      self._execution_time_probe)
+        if self._energy_probe is not None:
+            plot_energy_probe(self._logdir, self._energy_probe)
+            plot_power_probe(self._logdir, self._energy_probe)
+            self.print_energy_measurements()
 
         self.snn.disconnect()
 
@@ -570,15 +590,15 @@ class SNN(AbstractSNN):
             self._execution_time_probe = self.snn.board.probe(
                 probeType=ProbeParameter.EXECUTION_TIME,
                 probeCondition=PerformanceProbeCondition(
-                    tStart=1, tEnd=self.batch_size * self._duration,
-                    bufferSize=self._duration // 2, binSize=self._duration))
+                    tStart=1, tEnd=self.num_samples * self._duration,
+                    bufferSize=self._buffer_size, binSize=self._bin_size))
 
         if self.probe_energy:
             self._energy_probe = self.snn.board.probe(
                 probeType=ProbeParameter.ENERGY,
                 probeCondition=PerformanceProbeCondition(
-                    tStart=1, tEnd=self.batch_size * self._duration,
-                    bufferSize=self._duration // 2, binSize=self._duration))
+                    tStart=1, tEnd=self.num_samples * self._duration,
+                    bufferSize=self._buffer_size, binSize=self._bin_size))
 
         # Get probeCondition to limit probing activity.
         condition = None
@@ -863,7 +883,7 @@ class SNN(AbstractSNN):
         AbstractSNN.set_spiketrain_stats_input(self)
 
     def set_inputs(self, inputs):
-        """Set the input to the network in from of bias currents.
+        """Set the input to the network in form of bias currents.
 
         :param np.ndarray inputs: Input array.
         """
@@ -873,8 +893,19 @@ class SNN(AbstractSNN):
         # Normalize inputs and scale up to 8 bit.
         inputs = (inputs / np.max(inputs) * (2 ** 8 - 1)).astype(int)
 
+        def f(z):
+            self.composed_snn.composables.input.encode(np.expand_dims(z, 0))
+
         for x in inputs:
-            self.composed_snn.composables.input.encode(np.expand_dims(x, 0))
+            if self._is_aedat_input:
+                # Input x consists of num_timesteps "event-frames". Send them
+                # in sequentially.
+                for x_t in x:
+                    f(x_t)
+            else:
+                # Input x consists of a single image frame, which is sent in
+                # only once.
+                f(x)
         print("Done setting inputs.", flush=True)
 
     def preprocessing(self, **kwargs):
@@ -1054,13 +1085,19 @@ class SNN(AbstractSNN):
         else:
             interval = self._duration
 
-        cdnn = ComposableDNN(self.snn, interval)
+        enable_reset = self.config.getint('simulation',
+                                          'reset_between_nth_sample') > 0
+        cdnn = ComposableDNN(self.snn, interval, enable_reset=enable_reset)
         cdnn.name = 'dnn'
 
         # Configure input generator to stream images via channels from super
         # host to Loihi. Use batch size 1 regardless of actual batch size.
         shape = (1,) + tuple(self.snn.input_shape[1:])
-        input_generator = InputGenerator(shape, interval=interval,
+        # When using aedat (DVS) input, the InputGenerator processes one event
+        # frame each time step. Otherwise, a dense frame is processed for
+        # self._duration timesteps.
+        input_interval = 1 if self._is_aedat_input else interval
+        input_generator = InputGenerator(shape, interval=input_interval,
                                          numSnipsPerChip=3)
         input_generator.name = 'input'
         input_generator.setBiasExp(6)
@@ -1307,6 +1344,148 @@ class SNN(AbstractSNN):
             return np.min([self.W_MAX, self.b_MAX / scale_ratio]) / weight_norm
 
         return self.W_MAX / weight_norm
+
+    def print_energy_measurements(self):
+        # noinspection PyProtectedMember
+        num_cores_per_chip = self.snn.board._numCoresPerChip
+        num_cores_used = np.sum([chip.numCores for chip
+                                 in self.snn.board.chipMap.values()])
+        num_chips = 32
+
+        num_steps_per_sample = self._num_timesteps
+        num_steps = num_steps_per_sample * self.num_samples
+        timesteps = np.arange(num_steps)
+
+        time_per_step = self._energy_probe.totalTimePerTimeStep
+
+        # We are interested in the average execution time per time step.
+        # Since the execution time varies strongly for different phases (host,
+        # io, spiking, ...), we first extract the contribution of each phase
+        # to the total execution time.
+
+        # Buffer phase: Reading out energy probes.
+        idx_buffer = timesteps[self._buffer_size::self._buffer_size]
+
+        # Host phase: Network reset, output readout, ...
+        idx_host = timesteps[num_steps_per_sample::num_steps_per_sample] - 1
+        # Exclude time steps where we read out the probe buffer.
+        idx_host = np.lib.arraysetops.setdiff1d(idx_host, idx_buffer, True)
+
+        # IO phase: Setting inputs.
+        idx_io = timesteps.copy()
+        if not self._is_aedat_input:
+            # With input from a DVS, we stream events in at every time step,
+            # otherwise, only at the beginning of a run.
+            idx_io = idx_io[::num_steps_per_sample]
+        # Exclude time steps where we read out the probe buffer and host is
+        # active.
+        idx_io = np.lib.arraysetops.setdiff1d(idx_io, idx_buffer, True)
+        idx_io = np.lib.arraysetops.setdiff1d(idx_io, idx_host, True)
+
+        # Spiking phase.
+        idx_spiking = timesteps.copy()
+        # Exclude time steps where we read out the probe buffer, transfer data,
+        # and host is active.
+        idx_spiking = np.lib.arraysetops.setdiff1d(idx_spiking, idx_host, True)
+        idx_spiking = np.lib.arraysetops.setdiff1d(idx_spiking, idx_io, True)
+        idx_spiking = np.lib.arraysetops.setdiff1d(idx_spiking, idx_buffer,
+                                                   True)
+
+        num_steps_buffer = len(idx_buffer)
+        num_steps_host = len(idx_host)
+        num_steps_io = len(idx_io)
+        num_steps_spiking = len(idx_spiking)
+
+        # Compute means of each phase.
+        if num_steps_buffer:
+            time_buffer = np.mean(time_per_step[idx_buffer])
+        else:
+            time_buffer = 0
+        if num_steps_host:
+            time_host = np.mean(time_per_step[idx_host])
+        else:
+            time_host = 0
+        if num_steps_io:
+            time_io = np.mean(time_per_step[idx_io])
+        else:
+            time_io = 0
+        if num_steps_spiking:
+            time_spiking = np.mean(time_per_step[idx_spiking])
+        else:
+            time_spiking = 0
+
+        # Finally, sum up the total execution time, but replace the buffer
+        # phase with spiking phase because energy probes would be disabled at
+        # test time.
+        steps = [num_steps_buffer, num_steps_host, num_steps_io,
+                 num_steps_spiking]
+        times = [time_spiking, time_host, time_io, time_spiking]
+        time_per_sample = \
+            num_steps_per_sample * np.dot(steps, times) / np.sum(steps)
+        fps = 1e6 / time_per_sample
+
+        # Compute the percentage of time spent in each phase.
+        total_time = self._energy_probe.totalExecutionTime
+        ratio_buffer = time_buffer * num_steps_buffer / total_time
+        ratio_host = time_host * num_steps_host / total_time
+        ratio_io = time_io * num_steps_io / total_time
+        ratio_spiking = time_spiking * num_steps_spiking / total_time
+
+        print("Time per sample: {:.2f} ms".format(time_per_sample / 1e3))
+        print("Frames per second: {:.2f} Hz".format(fps))
+        print("Avg. time per step: {:.2f} ms".format(
+            time_per_sample / num_steps_per_sample / 1e3))
+        print("Buffer:")
+        print("\tAvg. time per step: {:.2f} ms.".format(time_buffer / 1e3))
+        print("\tAccounts for {:.2%} of total execution time.".format(
+            ratio_buffer))
+        print("\tOccurs with a frequency of {:.2%}.".format(
+            num_steps_buffer / num_steps))
+        print("IO:")
+        print("\tAvg. time per step: {:.2f} ms.".format(time_io / 1e3))
+        print("\tAccounts for {:.2%} of total execution time.".format(
+            ratio_io))
+        print("\tOccurs with a frequency of {:.2%}.".format(
+            num_steps_io / num_steps))
+        print("Host:")
+        print("\tAvg. time per step: {:.2f} ms.".format(time_host / 1e3))
+        print("\tAccounts for {:.2%} of total execution time.".format(
+            ratio_host))
+        print("\tOccurs with a frequency of {:.2%}.".format(
+            num_steps_host / num_steps))
+        print("Spiking:")
+        print("\tAvg. time per step: {:.2f} ms.".format(time_spiking / 1e3))
+        print("\tAccounts for {:.2%} of total execution time.".format(
+            ratio_spiking))
+        print("\tOccurs with a frequency of {:.2%}.".format(
+            num_steps_spiking / num_steps))
+
+        scale_for_used_cores = num_cores_used / num_chips / num_cores_per_chip
+
+        power_min = \
+            np.min(self._energy_probe.rawPowerTotal) * scale_for_used_cores
+        power_max = \
+            np.max(self._energy_probe.rawPowerTotal) * scale_for_used_cores
+        power_idle = power_min
+        power_active = power_max - power_min
+        if self._is_aedat_input:
+            power_dynamic = power_active * ratio_io
+        else:
+            power_dynamic = power_active * ratio_spiking
+
+        print("Idle power: {:.2f} mW".format(power_idle))
+        print("Active power: {:.2f} mW".format(power_active))
+        print("Idle power per core: {:.2f} mW".format(
+            power_idle / num_cores_used))
+        print("Dynamic power per core: {:.2f} mW".format(
+            power_dynamic / num_cores_used))
+        print("Dynamic energy per sample: {:.2f} mJ".format(
+            power_dynamic / fps))
+        print("Total energy per sample: {:.2f} mJ".format(
+            (power_idle + power_dynamic) / fps))
+
+        print("EDP: {:.2f}".format(
+            (power_idle + power_dynamic) * time_per_sample ** 2 / 1e15))
 
 
 def check_q_overflow(weights, p):
