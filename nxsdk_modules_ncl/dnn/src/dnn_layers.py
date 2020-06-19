@@ -491,10 +491,6 @@ def compileConvlike(self, partitionCandidate):
             if partition.numOutputAxonCfgEntries > limits.maxNumAxons:
                 limits.numOutputAxons += 1
                 return
-        else:
-            # If output layer, create synapse groups (needed for soft reset).
-            inverseMap = {relCxId: ([cxId], [0]) for relCxId, cxId
-                          in enumerate(permutedDestCxIdxs)}
 
         # SynEntries & SynFmts #
         ########################
@@ -511,34 +507,24 @@ def compileConvlike(self, partitionCandidate):
         # Create synEntries and synFmts for recurrent connections.
         mappedCxIds = {}
         if self.resetMode == 'soft':
-            # To ensure only one recurrent connection per neuron, duplicated
-            # recurrent connections receive 0 weight.
-            cxIdMap = {}
+            wgt = -connKwargs['weightMantSR']
             synGrpId = len(uniqueSourceGroups)
-            for _, (cxIds, relSrcIds) in inverseMap.items():
-                cxIdHash = hash(tuple(cxIds))
+            relSrcId = 0
+            for cxId in permutedDestCxIdxs:
+                cxIdHash = hash((cxId,))
                 if cxIdHash in mappedCxIds:
                     continue
-                mappedCxIds[cxIdHash] = (synGrpId, cxIds, relSrcIds)
+                mappedCxIds[cxIdHash] = (synGrpId, [cxId], [relSrcId])
                 synGrpId += 1
-                synEntriesOfRecurrentGroup = []
-                for cxId, relSrcId in zip(cxIds, relSrcIds):
-                    wgt = -connKwargs['weightMantSR']
-                    if cxId in cxIdMap:
-                        wgt = 0
-                    cxIdMap[cxId] = 1
-                    # wgt is set by mapper based on vThMant and scale
-                    synapseEncoder.encode(np.array([cxId], int) * 2,
-                                          np.array([wgt], int),
-                                          0,
-                                          0,
-                                          np.array([1], int),
-                                          softReset=True)
+                # wgt is set by mapper based on vThMant and scale
+                synapseEncoder.encode(np.array([cxId], int) * 2,
+                                      np.array([wgt], int),
+                                      0,
+                                      0,
+                                      np.array([1], int),
+                                      softReset=True)
 
-                    synEntriesOfRecurrentGroup.append(
-                        synapseEncoder.popSynEntries())
-
-                synEntriesOfCore.append(synEntriesOfRecurrentGroup)
+                synEntriesOfCore.append([synapseEncoder.popSynEntries()])
 
         synFmts, synEntryMap = compressSynFmts(synapseEncoder.getSynFmts(),
                                                limits.maxNumSynFmt)
