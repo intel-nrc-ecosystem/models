@@ -320,7 +320,7 @@ class SNN(AbstractSNN):
         # To prevent this add decay.
         if (hasattr(layer, 'activation') and
                 layer.activation.__name__ == 'softmax'):
-            softmax_decay = self.config.get(
+            softmax_decay = self.config.getint(
                 'loihi', 'softmax_decay', fallback=2**8)
             nx_layer.compartmentKwargs['compartmentVoltageDecay'] = \
                 softmax_decay
@@ -1155,7 +1155,18 @@ class SNN(AbstractSNN):
         elif 'x_test' in kwargs:
             x_norm = kwargs[str('x_test')]
         elif 'dataflow' in kwargs:
-            x_norm, y = kwargs[str('dataflow')].next()
+            x_norm = []
+            dataflow = kwargs[str('dataflow')]
+            num_samples_norm = self.config.getint('normalization',
+                                                  'num_samples', fallback='')
+            if num_samples_norm == '':
+                num_samples_norm = len(dataflow) * dataflow.batch_size
+            while len(x_norm) * self.batch_size < num_samples_norm:
+                x = dataflow.next()
+                if isinstance(x, tuple):  # Remove class label if present.
+                    x = x[0]
+                x_norm.append(x)
+            x_norm = np.concatenate(x_norm)
         else:
             raise NotImplementedError
         print("Using {} samples for normalization.".format(len(x_norm)))
