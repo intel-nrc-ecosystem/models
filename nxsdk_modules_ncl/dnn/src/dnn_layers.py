@@ -1996,9 +1996,8 @@ class NxDense(NxLayer, Dense):
 
                 for postPartition in partitionCandidate.postLayer.partitions:
 
-                    for relCxId, inputAxonGroup in \
-                            zip(relCxIds, postPartition.inputAxonGroups):
-                        cxId = cxIds[relCxId]
+                    for relCxId, cxId in zip(relCxIds, cxIds):
+                        inputAxonGroup = postPartition.inputAxonGroups[cxId]
                         outputId = relCxId
                         if self.resetMode == 'soft':
                             outputId = relCxId * neuronSize + 1
