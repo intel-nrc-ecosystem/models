@@ -1,0 +1,135 @@
+/*
+INTEL CONFIDENTIAL
+
+Copyright © 2018 Intel Corporation.
+
+This software and the related documents are Intel copyrighted
+materials, and your use of them is governed by the express
+license under which they were provided to you (License). Unless
+the License provides otherwise, you may not use, modify, copy,
+publish, distribute, disclose or transmit  this software or the 
+related documents without Intel's prior written permission.
+
+This software and the related documents are provided as is, with
+no express or implied warranties, other than those that are 
+expressly stated in the License.
+*/
+
+#include <stdlib.h>
+#include <string.h>
+#include "input_generator_{{chip}}_{{lmt}}.h"
+#include "nxsdk.h"
+#include <unistd.h>
+#include <time.h>
+
+// Data structure to hold partitioned range based address
+struct RangeBasedStateAddress{
+    uint32_t coreId; // CoreId of the injection point
+    uint32_t base;   // Base Id where the range starts
+    uint32_t length; // Length of the range
+    uint32_t stride; // Stride of the range
+};
+
+// Variables to store channelId's
+static int dataChannelId = -1;
+static int dataSizeChannelId = -1;
+static int infoChannelId = -1;
+static int metaDataChannelId = -1;
+
+// Data to be injected (1024 is because of the maximum size of packet we support)
+static uint32_t data[1024] = {0};
+
+// Run time information about numPackets and packetSize
+// Can be populated through jinja2 :-|
+static uint32_t numPackets = 0;
+static uint32_t packetSize = 0;
+
+// When should injection start
+static uint32_t start = {{start}};
+
+// At what interval since the start injections should happen
+// injection will happen at every : start + (n*interval) timesteps, where n=1,2.....
+static uint32_t interval = {{interval}};
+
+// Number of injection range address for the snip
+// Needed to allocate static memory for RnageBasedStateAddress
+static uint32_t numInjectionRangeAddress = {{numAddresses}};
+static struct RangeBasedStateAddress injectionRangeAddress[{{numAddresses}}];
+
+// Pointer to the neurocore
+static NeuronCore *nc;
+
+int doMgmt(runState *s) {
+    // printf("Starting do Mgmt %d\n", s->time_step);
+    // At first-timestep get all the channelIds
+    if (s->time_step == 1){ 
+        dataChannelId = getChannelID("dataChannel_{{chip}}_{{lmt}}");
+        infoChannelId = getChannelID("infoChannel_{{chip}}_{{lmt}}");
+        dataSizeChannelId = getChannelID("dataSizeChannel_{{chip}}_{{lmt}}");
+        metaDataChannelId = getChannelID("metaDataChannel_{{chip}}_{{lmt}}");
+
+        // Raise error incase any of the channel id is invalid
+        if(dataChannelId == -1 || infoChannelId == -1 || dataSizeChannelId == -1 || metaDataChannelId == -1)
+            printf("ERROR: Channel couldn't be found\n");
+    }
+
+    // Check if the condition for injection is met
+    // printf("Ending do Mgmt %d\n", s->time_step);
+    if (s->time_step == start || (s->time_step - start) % interval == 0) return 1;
+    else return 0;
+}
+
+void runMgmt(runState *s) {
+    // printf("Starting injection Mgmt %d\n", s->time_step);
+    // On first time step get all the constant informations
+    if (s->time_step == start) {
+        // Number of packets the snip will receive
+        readChannel(dataSizeChannelId, &numPackets, 1);
+
+        // Message Size or Packet Size
+        readChannel(infoChannelId, &packetSize, 1);
+
+        // Getting the range based address via the channel
+        readChannel(metaDataChannelId, &injectionRangeAddress, numInjectionRangeAddress * 4);
+    }
+
+    // To track packets read so far, gets incremented each time we read a packet
+    int readPacketsSoFar = 1;
+
+    // Get the first data packet
+    if (numPackets != 0) readChannel(dataChannelId,data,1);
+
+    // Tracks injection done per packet
+    int injectionsDone = 0;
+    // Loop over the range based address and inject the data
+    for (int i=0; i<numInjectionRangeAddress;i++){
+        CoreId coreId;
+        coreId.id = injectionRangeAddress[i].coreId;
+        nc = NEURON_PTR(coreId);
+        // printf("Num cxIds %d\n", injectionRangeAddress[i].length);
+        for(int j=0;j<injectionRangeAddress[i].length;j++){
+            uint32_t cxId = injectionRangeAddress[i].base + j*injectionRangeAddress[i].stride;
+            nc->cx_cfg[cxId] = (CxCfg){
+                 .BiasExp = {{ biasExp }},
+                 .Bias = data[injectionsDone],
+                 .VthProfile = 0,
+                 .CxProfile = 0
+                };
+            // printf("Injection: cxId %d, bias %d, biasExp %d, timeStep %d\n",
+            //          cxId, data[injectionsDone], {{biasExp}}, s->time_step);
+            injectionsDone++;
+
+
+            // Check if the whole packet has been consumed and still more packets have to be read
+            if (injectionsDone % (packetSize/4) == 0 && readPacketsSoFar != numPackets) {
+                // printf("readchannel %d\n", s->time_step);
+                injectionsDone = 0;
+                readChannel(dataChannelId,data,1);
+                readPacketsSoFar++;
+            }
+        }
+        // Flush the data to the core
+        nx_flush_core(coreId);
+    }
+    // printf("Ending injection Mgmt %d\n", s->time_step);
+}
