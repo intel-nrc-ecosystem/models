@@ -63,7 +63,7 @@ NX_KWARGS = ['numWeightBits', 'synapseEncoding', 'biasExp', 'vThMant',
              'validatePartitions', 'logger', 'probeSpikes', 'threshOp',
              'saveOutput', 'compartmentKwargs', 'connectionKwargs',
              'resetMode', 'weightExpSoftReset', 'numBiasBits', '_padding',
-             '_zeroPadding', '_signed']
+             '_zeroPadding', '_signed', 'inputMode']
 
 # Todo: Add and test soft-reset for all spiking layers.
 SOFT_RESET_LAYERS = {'NxConv2D', 'NxInputLayer', 'NxConv1D',
@@ -108,6 +108,13 @@ class ProbableStates(IntEnum):
     SPIKE = 2
     ACTIVITY = 3
     PHASE = 4
+
+
+class InputModes(IntEnum):
+    """Enumeration of input modes for NxModels."""
+
+    BIAS = 0
+    AEDAT = 1
 
 
 class CompartmentInterface:
@@ -2094,11 +2101,15 @@ class NxInputLayer(NxLayer, InputLayer):
 
     def __init__(self, input_shape=None, batch_size=None, biasExp=None,
                  vThMant=None, visualizePartitions=None, logger=None,
-                 signed=False, **kwargs):
+                 signed=False, inputMode=None, **kwargs):
 
         NxLayer.__init__(self, biasExp=biasExp, vThMant=vThMant,
                          visualizePartitions=visualizePartitions,
                          logger=logger, **kwargs)
+
+        # Set input mode. Would like to do this using @property and .setter,
+        # but Keras for some reason doesn't allow it.
+        self.inputMode = self.setInputMode(inputMode)
 
         # Set param for signed input spikes.
         self._signed = signed
@@ -2107,6 +2118,88 @@ class NxInputLayer(NxLayer, InputLayer):
 
         InputLayer.__init__(self, input_shape, batch_size, **kwargs)
 
+    def setInputMode(self, inputMode):
+        """Make changes to compartment settings depending on input mode.
+
+        If the default InputModes.BIAS is selected, no changes are made.
+
+        With InputModes.AEDAT, we need to check that the user has chosen the
+        correct compartment settings. If not, warn and override.
+
+        BIAS mode means that the input layer fires spikes at regular rates,
+        which are defined by the pixel values of the input iamge. This is the
+        default behavior.
+
+        AEDAT mode means that the user provides a list of events in form of
+        address-polarity-timestamp, which are fed into the layer as spikes. In
+        that case, we need to ensure that the threshold is as low as possible
+        and the compartment voltage and current decay as fast as possible. The
+        bias exponent is set to zero even though this should have no effect
+        (bias mantissa should not have been set anywhere).
+
+        Raises AssertionError when called before NxLayer is initialized.
+        Raises NotImplementedError if AEDAT is used together with soft reset
+        mode.
+        """
+
+        assert hasattr(self, '_resetMode'), "NxLayer must be initialized " \
+                                            "before setting input mode."
+
+        # Set default.
+        if inputMode is None:
+            inputMode = InputModes.BIAS
+
+        assert isinstance(inputMode, InputModes), \
+            "Input mode {} not implemented. Supported values: {}.".format(
+            inputMode, InputModes.__dict__['_member_names_'])
+
+        # Soft reset requires extra compartments, synapses, and axons for
+        # recurrent connections. These need to be taken into account when
+        # creating the synapses for the spike input.
+        if inputMode == InputModes.AEDAT and self.resetMode == 'soft':
+            raise NotImplementedError
+
+        # In case of BIAS mode, accept compartment arguments given by user
+        # without change.
+        if inputMode == InputModes.BIAS:
+            return inputMode
+
+        # For AEDAT mode, check, warn, override.
+
+        # Desired values:
+        DECAY = 4095
+        BIASEXP = 0
+        VTHMANT = 1
+
+        # Get current settings.
+        biasExp = self.compartmentKwargs['biasExp']
+        vThMant = self.compartmentKwargs['vThMant']
+        cxVoltageDecay = self.compartmentKwargs['compartmentVoltageDecay']
+        cxCurrentDecay = self.compartmentKwargs['compartmentCurrentDecay']
+
+        def check_warn_override(arg, target, label):
+            if arg != target:
+                print("WARNING: NxInputLayer argument {}={} overwritten by {} "
+                      "to meet requirement of inputMode={}.".format(
+                    label, arg, target, inputMode.name))
+                arg = target
+            return arg
+
+        biasExp = check_warn_override(biasExp, BIASEXP, 'biasExp')
+        vThMant = check_warn_override(vThMant, VTHMANT, 'vThMant')
+        cxVoltageDecay = check_warn_override(
+            cxVoltageDecay, DECAY, 'compartmentVoltageDecay')
+        cxCurrentDecay = check_warn_override(
+            cxCurrentDecay, DECAY, 'compartmentCurrentDecay')
+
+        # Apply new settings.
+        self.compartmentKwargs['biasExp'] = biasExp
+        self.compartmentKwargs['vThMant'] = vThMant
+        self.compartmentKwargs['compartmentVoltageDecay'] = cxVoltageDecay
+        self.compartmentKwargs['compartmentCurrentDecay'] = cxCurrentDecay
+
+        return inputMode
+
     @property
     def output_shape(self):
         shape = super(NxInputLayer, self).output_shape
@@ -2114,7 +2207,7 @@ class NxInputLayer(NxLayer, InputLayer):
             return fix_input_layer_shape(shape)
 
     def get_config(self):
-        config = {'signed': self._signed}
+        config = {'signed': self._signed, 'inputMode': self.inputMode}
         baseConfig = InputLayer.get_config(self)
         baseConfig2 = NxLayer.get_config(self)
         config.update(baseConfig)
@@ -2241,6 +2334,82 @@ class NxInputLayer(NxLayer, InputLayer):
             if partition.numOutputAxonCfgEntries > limits.maxNumAxons:
                 limits.numOutputAxons += 1
                 return
+
+            if self.inputMode == InputModes.AEDAT:
+                # Add synapses if input is set via spikes rather than biases.
+
+                synapseEncoder = SynapseEncoder(
+                    numWeightBits=8,
+                    maxNumSynPerSynEntry=limits.maxNumSynPerSynEntry,
+                    compression='dense1',
+                    useSharedSign=False)
+
+                weights = np.array([255])
+                synEntriesOfCore = []
+                for cxId in range(numCx):
+                    synapseEncoder.encode(synIds=np.array([cxId]),
+                                          weights=weights,
+                                          cIdxOffset=0,
+                                          cIdxMult=0)
+
+                    synEntriesOfSourceGroup = [synapseEncoder.popSynEntries()]
+
+                    synEntriesOfCore.append(synEntriesOfSourceGroup)
+
+                synFmts, synEntryMap = compressSynFmts(
+                    synapseEncoder.getSynFmts(), limits.maxNumSynFmt)
+
+                if len(synFmts) > limits.maxNumSynFmt:
+                    limits.numSynFmts += 1
+                    return
+
+                synEntriesOfCore = remapSynEntries(synEntriesOfCore, synFmts,
+                                                   synEntryMap)
+
+                for synFmt in synFmts:
+                    partition.addSynFmt(synFmt)
+
+                # Synapse Groups #
+                ##################
+
+                synMemOfCore = 0
+                for i, synEntriesOfSourceGroup in enumerate(synEntriesOfCore):
+
+                    # Create new synapse group.
+                    synapseGroup = SynapseGroup(i, synEntriesOfSourceGroup)
+
+                    # The longest block of registers in synMem may not exceed
+                    # 256 words for one axon. If axon is shared, only need to
+                    # find the maximum number of words used up by any of the
+                    # neurons in the population.
+                    if (synapseGroup.maxSynMemLen >
+                            limits.maxNumSynMemWordsPerAxon):
+                        limits.synMemPerAxon += 1
+                        return
+
+                    partition.addSynapseGroup(synapseGroup)
+                    synMemOfCore += synapseGroup.numSynMemWords
+
+                if synMemOfCore >= limits.maxNumSynMemWords:
+                    limits.numSynMemWords += 1
+                    return
+
+                # Input Axons #
+                ###############
+
+                for axonId, synapseGroup in enumerate(partition.synapseGroups):
+                    inputAxonGroup = InputAxonGroup(
+                        srcNodeIds=np.array([axonId]),
+                        multiplicity=np.array([1]),
+                        synGroup=synapseGroup,
+                        cxBase=0,
+                        parentPartition=partition)
+
+                    partition.addInputAxonGroup(inputAxonGroup)
+
+                if partition.numInputAxons > limits.maxNumAxons:
+                    limits.numInputAxons += 1
+                    return
 
             # synEntries and synFmts for recurrent connections
             if self.resetMode == 'soft':

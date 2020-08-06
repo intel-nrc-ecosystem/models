@@ -267,10 +267,15 @@ class SNN(AbstractSNN):
 
         if self._poisson_input:
             raise NotImplementedError
+        elif self._is_aedat_input:
+            input_mode = nxtf.InputModes.AEDAT
+        else:
+            input_mode = nxtf.InputModes.BIAS
 
         name = self.parsed_model.layers[0].name
         layer_kwargs = {'signed': self.signed_input,
                         'resetMode': self.reset_mode,
+                        'inputMode': input_mode,
                         'name': name}
         compartment_kwargs = eval(self.config.get('loihi',
                                                   'compartment_kwargs'))
