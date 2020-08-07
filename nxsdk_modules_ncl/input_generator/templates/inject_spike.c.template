@@ -1,0 +1,78 @@
+/*
+INTEL CONFIDENTIAL
+
+Copyright © 2018 Intel Corporation.
+
+This software and the related documents are Intel copyrighted
+materials, and your use of them is governed by the express
+license under which they were provided to you (License). Unless
+the License provides otherwise, you may not use, modify, copy,
+publish, distribute, disclose or transmit  this software or the 
+related documents without Intel's prior written permission.
+
+This software and the related documents are provided as is, with
+no express or implied warranties, other than those that are 
+expressly stated in the License.
+*/
+
+#include <stdlib.h>
+#include <string.h>
+#include "input_generator_{{chip}}_{{lmt}}.h"
+#include "nxsdk.h"
+#include <unistd.h>
+#include <time.h>
+
+// Variables to store channelId's
+static int data_channel_id = -1;
+static int time_step = 1;
+static uint32_t pkt_idx = 0;
+
+// Run time_step information about numPackets and packetSize
+static uint32_t packet_size = {{packet_size}};
+
+static int32_t data[{{packet_size}}*4];
+
+void readNewPacket(){
+  pkt_idx = 0;
+  readChannel(data_channel_id, data, 1);
+}
+
+int doSpiking(runState *s) {
+    // At first-time_stepstep get all the channelIds
+    if (s->time_step == 1){
+        data_channel_id = getChannelID("dataChannel_{{chip}}_{{lmt}}");
+
+        // Raise error incase any of the channel id is invalid
+        if(data_channel_id == -1)
+            printf("ERROR: Channel couldn't be found\n");
+        readNewPacket();
+        time_step = data[pkt_idx++];
+    }
+    if(time_step == s->time_step){
+      return 1;
+    }
+
+}
+
+void runSpiking(runState *s) {
+    while(time_step == s->time_step) {
+      if (pkt_idx == packet_size) readNewPacket();
+      uint32_t numAxonSpikes = data[pkt_idx++]; // Get the third element
+      if (pkt_idx == packet_size) readNewPacket();
+      for (int j=0; j<numAxonSpikes; j++){
+        CoreId coreId = (CoreId) {.id = data[pkt_idx++]}; // Get the next element
+        if (pkt_idx == packet_size) readNewPacket();
+        uint32_t numAxons = data[pkt_idx++];
+        if (pkt_idx == packet_size) readNewPacket();
+          for (int k=0; k< numAxons; k++){
+            uint32_t axonId = data[pkt_idx++];// Get the next element
+            if (pkt_idx == packet_size) readNewPacket();
+            nx_send_remote_event(time_step, nx_my_chipid(), coreId, axonId);
+          }
+      }
+      if (pkt_idx == packet_size) readNewPacket();
+      time_step = data[pkt_idx++]; // Get the second element
+    }
+
+
+}
