@@ -2149,7 +2149,8 @@ class NxInputLayer(NxLayer, InputLayer):
         if inputMode is None:
             inputMode = InputModes.BIAS
 
-        assert isinstance(inputMode, InputModes), \
+        allowed = [i.name for i in InputModes] + [i.value for i in InputModes]
+        assert inputMode in allowed, \
             "Input mode {} not implemented. Supported values: {}.".format(
             inputMode, InputModes.__dict__['_member_names_'])
 
@@ -3050,6 +3051,9 @@ class NxModel(Model):
             # This enables accessing neuron fields directly, e.g. for probes.
             compilableLayer.setBoardAndCxResourceMap(
                 self.board, mappableLayer.genCxResourceMap())
+            if 'Input' in compilableLayer.__class__.__name__:
+                compilableLayer.inputAxonResourceMap = \
+                    mappableLayer.genInputAxonResourceMap()
 
         return mapper
 

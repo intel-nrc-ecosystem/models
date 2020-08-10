@@ -118,6 +118,31 @@ class Layer:
 
         return cxResourceMap
 
+    def genInputAxonResourceMap(self):
+        """Generate a resource map for input axons.
+
+        Maps from global layer-wide input axon id to its
+        ``(chipId, coreId, axonId)`` address.
+
+        :raises AssertionError: Layer must be mapped before resource map can
+            be generated.
+
+        :return: inputAxonResourceMap
+        :rtype: np.ndarray
+        """
+
+        assert self._isMapped, \
+            "Layer must be mapped before InputAxonResourceMap can be " \
+            "generated."
+
+        resourceMap = []
+        for p in self.partitions:
+            for axonGroup in p.inputAxonGroups:
+                for axonId in axonGroup.srcNodeIds:
+                    resourceMap.append([p.chipId, p.coreId, axonId])
+
+        return np.array(resourceMap, int)
+
     def addPartition(self, partition):
         """Add partition to layer, and update cost properties.
 

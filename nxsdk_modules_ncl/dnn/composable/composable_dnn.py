@@ -32,7 +32,7 @@ from nxsdk.composable.resource_map import ResourceMapFactory
 from nxsdk.graph.graph import Graph
 from nxsdk.graph.monitor.probes import SpikeProbeCondition
 from nxsdk.graph.processes.phase_enums import Phase
-from nxsdk_modules_ncl.dnn.src.dnn_layers import ProbableStates
+from nxsdk_modules_ncl.dnn.src.dnn_layers import ProbableStates, InputModes
 
 
 class ComposableDNN(AbstractComposable):
@@ -123,12 +123,15 @@ class ComposableDNN(AbstractComposable):
         """Updates resourceMap to input and output ports"""
         inputLayer = self._dnn.layers[0]
 
-        # Return input compartments for multi-compartment neurons
-        neuronSize = 2 if inputLayer.resetMode == 'soft' else 1
-        cxResourceMap = inputLayer.cxResourceMap[::neuronSize]
-
-        self.ports.input.resourceMap = ResourceMapFactory.createExplicit(ResourceMapType.COMPARTMENT,
-                                                                         cxResourceMap)
+        if inputLayer.inputMode == InputModes.AEDAT:
+            self.ports.input.resourceMap = ResourceMapFactory.createExplicit(
+                ResourceMapType.INPUT_AXON, inputLayer.inputAxonResourceMap)
+        else:
+            # Return input compartments for multi-compartment neurons
+            neuronSize = 2 if inputLayer.resetMode == 'soft' else 1
+            cxResourceMap = inputLayer.cxResourceMap[::neuronSize]
+            self.ports.input.resourceMap = ResourceMapFactory.createExplicit(
+                ResourceMapType.COMPARTMENT, cxResourceMap)
         # self.ports.output.resourceMap = CompartmentResourceMap(self._dnn.layers[-1].cxResourceMap)
         return self
 
