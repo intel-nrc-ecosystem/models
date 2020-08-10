@@ -30,6 +30,7 @@ from nxsdk.graph.nxboard import N2Board
 from nxsdk_modules_ncl.input_generator.spike_input_generator import SpikeInputGenerator
 import numpy as np
 
+os.environ['SLURM'] = '1'
 
 class TestSpikeInputGenerator(unittest.TestCase):
     """
@@ -51,9 +52,12 @@ class TestSpikeInputGenerator(unittest.TestCase):
 
         # Create a mock port and connect input encoder to this port
         mockPort = StateInputPort(name="input")
-        axonIds = np.arange(100)
-        chip_core_ids = np.array([[0, 19]] * 100)
-        mockAddresses = np.hstack((chip_core_ids, axonIds.reshape((100, 1))))
+        num_axons = 100
+        dst_core_id = 5
+        chip_id = 0
+        axonIds = np.arange(num_axons)
+        chip_core_ids = np.array([[chip_id, dst_core_id]] * num_axons)
+        mockAddresses = np.hstack((chip_core_ids, np.expand_dims(axonIds, 1)))
         mockPort.resourceMap = ResourceMapFactory.createExplicit(
             ResourceMapType.INPUT_AXON, mockAddresses)
 
@@ -68,10 +72,12 @@ class TestSpikeInputGenerator(unittest.TestCase):
 
         # Encode the data
         input_list = []
-        for i in range(20):
-            input_list.append((random.randint(1, 20), random.randint(0, 100)))
+        num_timesteps = 20
+        for i in range(num_timesteps):
+            input_list.append((random.randint(0, num_axons - 1),
+                               random.randint(1, num_timesteps)))
         ie.encode(input_list)
 
-        m.run(20)
+        m.run(num_timesteps)
         m.disconnect()
         self.assertEqual(True, True)
