@@ -302,25 +302,23 @@ class SpikeInputGenerator(AbstractComposable):
             for snip in input_by_chip[chip]:
                 # Key is time and Value is (core, axonid)
                 input_per_snip_per_chip = OrderedDict()
-                input_to_be_send = []
                 for core, axon, t in snip:
                     input_per_snip_per_chip.setdefault(
                         t, []).append((core, axon))
 
+                input_to_be_sent = []
                 for time, core_spike_list in input_per_snip_per_chip.items():
+                    input_to_be_sent.append(time)
                     input_per_time_core = OrderedDict()
-                    input_to_be_send.append(time)
-                    input_to_be_send.append(len(core_spike_list))
                     for core, axon in core_spike_list:
                         input_per_time_core.setdefault(core, []).append(axon)
+                    input_to_be_sent.append(len(input_per_time_core))
                     for core, axonlist in input_per_time_core.items():
-                        input_to_be_send.append(core)
-                        input_to_be_send.append(len(axonlist))
-                        input_to_be_send.extend(axonlist)
+                        input_to_be_sent.append(core)
+                        input_to_be_sent.append(len(axonlist))
+                        input_to_be_sent.extend(axonlist)
 
                 self._dataChannels[channelIdx].write(
-                    math.ceil(
-                        len(input_to_be_send) /
-                        self.packetSize),
-                    input_to_be_send)
+                    math.ceil(len(input_to_be_sent) / self.packetSize),
+                    input_to_be_sent)
                 channelIdx += 1
