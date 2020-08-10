@@ -31,7 +31,7 @@ from nxsdk.api.enums.api_enums import ProbeParameter
 from nxsdk.graph.monitor.probes import IntervalProbeCondition, \
     PerformanceProbeCondition
 from nxsdk.composable.model import Model as ComposableModel
-from nxsdk_modules.input_generator.input_generator import InputGenerator
+from nxsdk_modules_ncl.input_generator.input_generator import InputGenerator
 from nxsdk_modules_ncl.dnn.composable.composable_dnn import ComposableDNN
 
 from snntoolbox.parsing.utils import get_type
@@ -93,21 +93,18 @@ class SNN(AbstractSNN):
         # '' here.
         self._layer_to_probe = self.config.get('loihi', 'layer_to_probe',
                                                fallback='')
-        self._execution_time_probe = None
-        self._energy_probe = None
         # Buffer size should not be a multiple of the run time. Otherwise the
         # io power reading at the beginning of a run will be disturbed.
         self._buffer_size = 4095  # self._duration * 2 + 11
-        self._bin_size = self._duration // 20
+        self._bin_size = max(1, self._duration // 20)
         self.num_samples = self.config.getint('simulation', 'num_to_test')
         self.normalize_thresholds = self.config.getboolean(
             'loihi', 'normalize_thresholds', fallback=True)
 
         # Configure probing
-        self.probe_execution_time = self.config.getboolean(
-            'loihi', 'probe_execution_time', fallback=False)
-        self.probe_energy = self.config.getboolean(
-            'loihi', 'probe_energy', fallback=False)
+        self.profile_performance = self.config.getboolean(
+            'loihi', 'profile_performance', fallback=False)
+        self._performance_probe = None
 
         self.clamp_layers = self.config.getboolean('loihi', 'clamp_layers',
                                                    fallback=False)
@@ -200,18 +197,7 @@ class SNN(AbstractSNN):
         compartment_kwargs = eval(self.config.get('loihi',
                                                   'compartment_kwargs'))
 
-        # If this is the output layer and uses softmax, we determine the
-        # classification guess by reading out the voltages instead of spikes.
-        # For the voltages to be accurate, we need to prevent overflow by
-        # setting threshold to maximum and disabling spikes and reset.
-        if (hasattr(layer, 'activation') and
-                layer.activation.__name__ == 'softmax'):
-            compartment_kwargs['vThMant'] = V_THR_MAX
-            # theshOp = 3 will prevent reset. Will not prevent overflow by
-            # saturating at threshold (only works in multicompartment neurons).
-            compartment_kwargs['threshOp'] = 3
-
-        elif self.normalize_thresholds:
+        if self.normalize_thresholds:
             # The final threshold mantissa is calculated using the thresh_mant
             # and thresh_exp from the normalization algorithm.
             vThMant = self.thresh_mants[layer.name]
@@ -320,15 +306,6 @@ class SNN(AbstractSNN):
         layer_kwargs = self.get_layer_kwargs(layer)
 
         nx_layer = nx_layer_name(**layer_kwargs)
-
-        # The softmax layer vmem can saturate during inference.
-        # To prevent this add decay.
-        if (hasattr(layer, 'activation') and
-                layer.activation.__name__ == 'softmax'):
-            softmax_decay = self.config.getint(
-                'loihi', 'softmax_decay', fallback=2**8)
-            nx_layer.compartmentKwargs['compartmentVoltageDecay'] = \
-                softmax_decay
 
         inbound = self._spiking_layers[self._previous_layer_name]
 
@@ -557,15 +534,13 @@ class SNN(AbstractSNN):
     def end_sim(self):
         """Clean up after run."""
 
-        if self._execution_time_probe is not None:
-            plot_execution_time_probe(self._logdir,
-                                      self._execution_time_probe)
-        if self._energy_probe is not None:
-            plot_energy_probe(self._logdir, self._energy_probe)
-            plot_power_probe(self._logdir, self._energy_probe)
-            self.print_energy_measurements()
-
         self.snn.disconnect()
+
+        if self.profile_performance:
+            plot_execution_time_probe(self._logdir, self._performance_probe)
+            plot_energy_probe(self._logdir, self._performance_probe)
+            plot_power_probe(self._logdir, self._performance_probe)
+            self.print_performance()
 
     def save(self, path, filename):
         """Write model architecture and parameters to disk.
@@ -593,19 +568,12 @@ class SNN(AbstractSNN):
     def set_vars_to_record(self):
         """Set variables to record during simulation."""
 
-        if self.probe_execution_time:
-            self._execution_time_probe = self.snn.board.probe(
-                probeType=ProbeParameter.EXECUTION_TIME,
-                probeCondition=PerformanceProbeCondition(
-                    tStart=1, tEnd=self.num_samples * self._duration,
-                    bufferSize=self._buffer_size, binSize=self._bin_size))
-
-        if self.probe_energy:
-            self._energy_probe = self.snn.board.probe(
-                probeType=ProbeParameter.ENERGY,
-                probeCondition=PerformanceProbeCondition(
-                    tStart=1, tEnd=self.num_samples * self._duration,
-                    bufferSize=self._buffer_size, binSize=self._bin_size))
+        if self.profile_performance:
+            condition = PerformanceProbeCondition(
+                tStart=1, tEnd=self.num_samples * self._duration,
+                bufferSize=self._buffer_size, binSize=self._bin_size)
+            self._performance_probe = self.snn.board.probe(
+                ProbeParameter.ENERGY, condition)
 
         # Get probeCondition to limit probing activity.
         condition = None
@@ -1252,6 +1220,8 @@ class SNN(AbstractSNN):
                 # Softmax layers in Loihi use no threshold.
                 if (hasattr(layer, 'activation') and
                         layer.activation.__name__ == 'softmax'):
+                    thresh_mants[name] = 1  # V_THR_MAX
+                    thresh_exps[name] = 0
                     continue
 
                 # Apply weight changes to layer, so we can estimate PSP. Note
@@ -1363,147 +1333,29 @@ class SNN(AbstractSNN):
 
         return self.W_MAX / weight_norm
 
-    def print_energy_measurements(self):
-        # noinspection PyProtectedMember
-        num_cores_per_chip = self.snn.board._numCoresPerChip
-        num_cores_used = np.sum([chip.numCores for chip
-                                 in self.snn.board.chipMap.values()])
-        num_chips = 32
+    def print_performance(self):
+        stats = self.snn.board.energyTimeMonitor.powerProfileStats
 
-        num_steps_per_sample = self._num_timesteps
-        num_steps = num_steps_per_sample * self.num_samples
-        timesteps = np.arange(num_steps)
+        print("Static power (x86): {} mW".format(stats['core']['static']))
+        print("Dynamic power (x86): {} mW".format(stats['core']['dynamic']))
+        print("Total power (x86): {} mW".format(stats['core']['total']))
+        print("Static power (neuro-cores): {} mW".format(
+            stats['lakemont']['static']))
+        print("Dynamic power (neuro-cores): {} mW".format(
+            stats['lakemont']['dynamic']))
+        print("Total power (neuro-cores): {} mW".format(
+            stats['lakemont']['total']))
+        print("Static power (system): {} mW".format(stats['static']))
+        print("Dynamic power (system): {} mW".format(stats['dynamic']))
+        print("Total power (system): {} mW".format(stats['total']))
+        time_per_sample = stats.time
+        energy_per_sample = stats['total'] * time_per_sample
+        print("Energy per inference: {} mJ".format(energy_per_sample))
+        print("Execution time per inference: {} ms".format(time_per_sample))
+        print("Energy Delay Product: {} uJs".format(energy_per_sample *
+                                                    time_per_sample))
 
-        time_per_step = self._energy_probe.totalTimePerTimeStep
-
-        # We are interested in the average execution time per time step.
-        # Since the execution time varies strongly for different phases (host,
-        # io, spiking, ...), we first extract the contribution of each phase
-        # to the total execution time.
-
-        # Buffer phase: Reading out energy probes.
-        idx_buffer = timesteps[self._buffer_size::self._buffer_size]
-
-        # Host phase: Network reset, output readout, ...
-        idx_host = timesteps[num_steps_per_sample::num_steps_per_sample] - 1
-        # Exclude time steps where we read out the probe buffer.
-        idx_host = np.lib.arraysetops.setdiff1d(idx_host, idx_buffer, True)
-
-        # IO phase: Setting inputs.
-        idx_io = timesteps.copy()
-        if not self._is_aedat_input:
-            # With input from a DVS, we stream events in at every time step,
-            # otherwise, only at the beginning of a run.
-            idx_io = idx_io[::num_steps_per_sample]
-        # Exclude time steps where we read out the probe buffer and host is
-        # active.
-        idx_io = np.lib.arraysetops.setdiff1d(idx_io, idx_buffer, True)
-        idx_io = np.lib.arraysetops.setdiff1d(idx_io, idx_host, True)
-
-        # Spiking phase.
-        idx_spiking = timesteps.copy()
-        # Exclude time steps where we read out the probe buffer, transfer data,
-        # and host is active.
-        idx_spiking = np.lib.arraysetops.setdiff1d(idx_spiking, idx_host, True)
-        idx_spiking = np.lib.arraysetops.setdiff1d(idx_spiking, idx_io, True)
-        idx_spiking = np.lib.arraysetops.setdiff1d(idx_spiking, idx_buffer,
-                                                   True)
-
-        num_steps_buffer = len(idx_buffer)
-        num_steps_host = len(idx_host)
-        num_steps_io = len(idx_io)
-        num_steps_spiking = len(idx_spiking)
-
-        # Compute means of each phase.
-        if num_steps_buffer:
-            time_buffer = np.mean(time_per_step[idx_buffer])
-        else:
-            time_buffer = 0
-        if num_steps_host:
-            time_host = np.mean(time_per_step[idx_host])
-        else:
-            time_host = 0
-        if num_steps_io:
-            time_io = np.mean(time_per_step[idx_io])
-        else:
-            time_io = 0
-        if num_steps_spiking:
-            time_spiking = np.mean(time_per_step[idx_spiking])
-        else:
-            time_spiking = 0
-
-        # Finally, sum up the total execution time, but replace the buffer
-        # phase with spiking phase because energy probes would be disabled at
-        # test time.
-        steps = [num_steps_buffer, num_steps_host, num_steps_io,
-                 num_steps_spiking]
-        times = [time_spiking, time_host, time_io, time_spiking]
-        time_per_sample = \
-            num_steps_per_sample * np.dot(steps, times) / np.sum(steps)
-        fps = 1e6 / time_per_sample
-
-        # Compute the percentage of time spent in each phase.
-        total_time = self._energy_probe.totalExecutionTime
-        ratio_buffer = time_buffer * num_steps_buffer / total_time
-        ratio_host = time_host * num_steps_host / total_time
-        ratio_io = time_io * num_steps_io / total_time
-        ratio_spiking = time_spiking * num_steps_spiking / total_time
-
-        print("Time per sample: {:.4f} ms".format(time_per_sample / 1e3))
-        print("Frames per second: {:.4f} Hz".format(fps))
-        print("Avg. time per step: {:.4f} ms".format(
-            time_per_sample / num_steps_per_sample / 1e3))
-        print("Buffer:")
-        print("\tAvg. time per step: {:.4f} ms.".format(time_buffer / 1e3))
-        print("\tAccounts for {:.2%} of total execution time.".format(
-            ratio_buffer))
-        print("\tOccurs with a frequency of {:.2%}.".format(
-            num_steps_buffer / num_steps))
-        print("IO:")
-        print("\tAvg. time per step: {:.4f} ms.".format(time_io / 1e3))
-        print("\tAccounts for {:.2%} of total execution time.".format(
-            ratio_io))
-        print("\tOccurs with a frequency of {:.2%}.".format(
-            num_steps_io / num_steps))
-        print("Host:")
-        print("\tAvg. time per step: {:.4f} ms.".format(time_host / 1e3))
-        print("\tAccounts for {:.2%} of total execution time.".format(
-            ratio_host))
-        print("\tOccurs with a frequency of {:.2%}.".format(
-            num_steps_host / num_steps))
-        print("Spiking:")
-        print("\tAvg. time per step: {:.4f} ms.".format(time_spiking / 1e3))
-        print("\tAccounts for {:.2%} of total execution time.".format(
-            ratio_spiking))
-        print("\tOccurs with a frequency of {:.2%}.".format(
-            num_steps_spiking / num_steps))
-
-        scale_for_used_cores = num_cores_used / num_chips / num_cores_per_chip
-
-        power_min = \
-            np.min(self._energy_probe.rawPowerTotal) * scale_for_used_cores
-        power_max = \
-            np.max(self._energy_probe.rawPowerTotal) * scale_for_used_cores
-        power_idle = power_min
-        power_active = power_max - power_min
-        if self._is_aedat_input:
-            power_dynamic = power_active * ratio_io
-        else:
-            power_dynamic = power_active * ratio_spiking
-
-        print("Idle power: {:.4f} mW".format(power_idle))
-        print("Active power: {:.4f} mW".format(power_active))
-        print("Idle power per core: {:.4f} mW".format(
-            power_idle / num_cores_used))
-        print("Dynamic power per core: {:.4f} mW".format(
-            power_dynamic / num_cores_used))
-        print("Dynamic energy per sample: {:.4f} mJ".format(
-            power_dynamic / fps))
-        print("Total energy per sample: {:.4f} mJ".format(
-            (power_idle + power_dynamic) / fps))
-
-        print("EDP: {:.4f}".format(
-            (power_idle + power_dynamic) * time_per_sample ** 2 / 1e15))
+        stats.save(os.path.join(self._logdir, 'performance_stats'))
 
 
 def check_q_overflow(weights, p):
