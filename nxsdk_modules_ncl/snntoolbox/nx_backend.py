@@ -95,7 +95,7 @@ class SNN(AbstractSNN):
                                                fallback='')
         # Buffer size should not be a multiple of the run time. Otherwise the
         # io power reading at the beginning of a run will be disturbed.
-        self._buffer_size = 4095  # self._duration * 2 + 11
+        self._buffer_size = 1023  # self._duration * 2 + 11
         self._bin_size = max(1, self._duration // 20)
         self.num_samples = self.config.getint('simulation', 'num_to_test')
         self.normalize_thresholds = self.config.getboolean(
@@ -1336,20 +1336,25 @@ class SNN(AbstractSNN):
     def print_performance(self):
         stats = self.snn.board.energyTimeMonitor.powerProfileStats
 
-        print("Static power (x86): {} mW".format(stats['core']['static']))
-        print("Dynamic power (x86): {} mW".format(stats['core']['dynamic']))
-        print("Total power (x86): {} mW".format(stats['core']['total']))
-        print("Static power (neuro-cores): {} mW".format(
-            stats['lakemont']['static']))
-        print("Dynamic power (neuro-cores): {} mW".format(
-            stats['lakemont']['dynamic']))
-        print("Total power (neuro-cores): {} mW".format(
-            stats['lakemont']['total']))
-        print("Static power (system): {} mW".format(stats['static']))
-        print("Dynamic power (system): {} mW".format(stats['dynamic']))
-        print("Total power (system): {} mW".format(stats['total']))
-        time_per_sample = stats.time
-        energy_per_sample = stats['total'] * time_per_sample
+        lakemont_static = stats['power']['lakemont']['static']
+        lakemont_dynamic = stats['power']['lakemont']['dynamic']
+        core_static = stats['power']['core']['static']
+        core_dynamic = stats['power']['core']['dynamic']
+        total = stats['power']['total']
+        print("Static power (x86): {} mW".format(lakemont_static))
+        print("Dynamic power (x86): {} mW".format(lakemont_dynamic))
+        print("Total power (x86): {} mW".format(lakemont_static +
+                                                lakemont_dynamic))
+        print("Static power (neuro-cores): {} mW".format(core_static))
+        print("Dynamic power (neuro-cores): {} mW".format(core_dynamic))
+        print("Total power (neuro-cores): {} mW".format(core_static +
+                                                        core_dynamic))
+        print("Static power (system): {} mW".format(stats['power']['static']))
+        print("Dynamic power (system): {} mW".format(
+            stats['power']['dynamic']))
+        print("Total power (system): {} mW".format(total))
+        time_per_sample = stats.timePerTimestep * self._num_timesteps / 1e3
+        energy_per_sample = total * time_per_sample / 1e3  # mJ
         print("Energy per inference: {} mJ".format(energy_per_sample))
         print("Execution time per inference: {} ms".format(time_per_sample))
         print("Energy Delay Product: {} uJs".format(energy_per_sample *
