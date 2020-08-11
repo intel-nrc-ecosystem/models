@@ -38,6 +38,7 @@ void readNewPacket(){
 }
 
 int doSpiking(runState *s) {
+    // printf("Do spiking %d ", time_step);
     // At first-time_stepstep get all the channelIds
     if (s->time_step == 1){
         data_channel_id = getChannelID("dataChannel_{{chip}}_{{lmt}}");
@@ -55,6 +56,7 @@ int doSpiking(runState *s) {
 }
 
 void runSpiking(runState *s) {
+    // printf("Run spiking %d ", time_step);
     while(time_step == s->time_step) {  // Process spikes of current timestep.
       if (pkt_idx == packet_size) readNewPacket();
       uint32_t numCores = data[pkt_idx++]; // Get the third element
@@ -67,7 +69,8 @@ void runSpiking(runState *s) {
         for (int k=0; k<numAxons; k++){ // Iterate over all axons on current core that contain spikes.
           uint32_t axonId = data[pkt_idx++]; // Get the next element
           if (pkt_idx == packet_size) readNewPacket();
-          // printf("Sending spike at time %d to core %d via axon %d.\n", time_step, coreId, axonId);
+          // printf("Sending spike at time %d to core %d via axon %d, chip %d.\n", time_step, coreId.id, axonId, nx_my_chipid().id);
+          axonId = 1<<14|axonId;
           nx_send_remote_event(time_step, nx_my_chipid(), coreId, axonId);
         }
       }
