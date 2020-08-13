@@ -868,7 +868,7 @@ class NxLayer(object):
 
         self._compartmentDefaults = {'functionalState': 2,
                                      'compartmentVoltageDecay': 0,
-                                     'compartmentCurrentDecay': 4096,
+                                     'compartmentCurrentDecay': 4095,
                                      'refractoryDelay': 1}
 
         self.compartmentKwargs.update(self._compartmentDefaults)
@@ -896,28 +896,32 @@ class NxLayer(object):
             resetMode = 'hard'
         self._resetMode = resetMode
 
-        if resetMode == 'soft' and activation != 'softmax':
-            # The weight mantissa and exponent for the recurrent
-            # connections used in subtractive-reset are computed
-            # to as close as possible to the vThMant.
-            wgtExp = int(np.ceil(np.log2(vThMant / 256)))
+        if resetMode == 'soft':
+            if activation == 'softmax':
+                self.connectionKwargs.update(
+                    {'weightExpSR': 0,
+                     'weightMantSR': 255})
+            else:
+                # The weight mantissa and exponent for the recurrent
+                # connections used in subtractive-reset are computed to as
+                # close as possible to the vThMant.
+                wgtExp = int(np.ceil(np.log2(vThMant / 256)))
 
-            if wgtExp > 7:
-                print("WgtExp {} exceeds W_EXP_MAX={}".format(
-                    wgtExp, 7))
-                wgtExp = 7
+                if wgtExp > 7:
+                    print("WgtExp {} exceeds W_EXP_MAX={}".format(wgtExp, 7))
+                    wgtExp = 7
 
-                print("vThMant {} exceeds the max value {} which may "
-                      "be subtracted using recurrent connections.".format(
-                        vThMant, 255*2**7))
+                    print("vThMant {} exceeds the max value {} which may "
+                          "be subtracted using recurrent connections.".format(
+                            vThMant, 255*2**7))
 
-            wgtExp = np.max([0, wgtExp])
-            wgtMant = int(np.rint(vThMant / 2 ** wgtExp))
-            wgtMant = np.max([0, wgtMant])
-            wgtMant = np.min([wgtMant, 255])
-            self.connectionKwargs.update(
-                {'weightExpSR': wgtExp,
-                 'weightMantSR': wgtMant})
+                wgtExp = np.max([0, wgtExp])
+                wgtMant = int(np.rint(vThMant / 2 ** wgtExp))
+                wgtMant = np.max([0, wgtMant])
+                wgtMant = np.min([wgtMant, 255])
+                self.connectionKwargs.update(
+                    {'weightExpSR': wgtExp,
+                     'weightMantSR': wgtMant})
 
         if activation == 'softmax':
             # Set threshOp to 3 so that the compartment does not spike
@@ -927,11 +931,6 @@ class NxLayer(object):
             self.compartmentKwargs['vThMant'] = 2**17 - 1
             # Add decay to prevent saturation.
             self.compartmentKwargs['compartmentVoltageDecay'] = 2**8
-
-            if resetMode == 'soft':
-                self.connectionKwargs.update(
-                    {'weightExpSR': 0,
-                     'weightMantSR': 255})
 
         # Override if passed connection and compartment kwargs.
         # Used when loading an existing NxModel.
@@ -2345,7 +2344,7 @@ class NxInputLayer(NxLayer, InputLayer):
                     compression='dense1',
                     useSharedSign=False)
 
-                weights = np.array([255])
+                weights = np.array([2])
                 synEntriesOfCore = []
                 for cxId in range(numCx):
                     synapseEncoder.encode(synIds=np.array([cxId]),
