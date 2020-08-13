@@ -50,10 +50,40 @@ class TestSpikeInputGenerator(unittest.TestCase):
         # Create an instance of board
         board = N2Board(1, 1, [4], [[5] * 4])
 
+        n2Core = board.n2Chips[0].n2Cores[0]
+
+        n2Core.cxProfileCfg[0].configure(decayV=int(2 ** 12 - 1),
+                                         decayU=int(2 ** 12 - 1))
+
+        n2Core.cxMetaState[0].configure(phase0=2)
+
+        n2Core.vthProfileCfg[0].staticCfg.configure(vth=1024)
+        n2Core.numUpdates.configure(numUpdates=1)
+        n2Core.cxCfg[0].configure(
+            bias=0,
+            biasExp=0,
+            vthProfile=0,
+            cxProfile=0)
+
+        n2Core.synapseMap[0].synapsePtr = 0
+        n2Core.synapseMap[0].synapseLen = 1
+        n2Core.synapseMap[0].discreteMapEntry.configure()
+        n2Core.synapses[0].CIdx = 0
+        n2Core.synapses[0].Wgt = 255
+        n2Core.synapses[0].synFmtId = 1
+        n2Core.synapseFmt[1].wgtBits = 7
+        n2Core.synapseFmt[1].numSynapses = 63
+        n2Core.synapseFmt[1].idxBits = 1
+        n2Core.synapseFmt[1].compression = 3
+        n2Core.synapseFmt[1].fanoutType = 1
+
+        mon = board.monitor
+        vProbes = mon.probe(n2Core.cxState, [0], 'v')[0]
+
         # Create a mock port and connect input encoder to this port
         mockPort = StateInputPort(name="input")
         num_axons = 100
-        dst_core_id = 5
+        dst_core_id = 4
         chip_id = 0
         axonIds = np.arange(num_axons)
         chip_core_ids = np.array([[chip_id, dst_core_id]] * num_axons)
@@ -72,12 +102,17 @@ class TestSpikeInputGenerator(unittest.TestCase):
 
         # Encode the data
         input_list = []
-        num_timesteps = 20
-        for i in range(num_timesteps):
-            input_list.append((random.randint(0, num_axons - 1),
-                               random.randint(1, num_timesteps)))
+        num_timesteps = 200
+        # for i in range(num_timesteps):
+        #     input_list.append((random.randint(0, num_axons - 1),
+        #                        random.randint(1, num_timesteps)))
+        input_list = [(0, t) for t in range(1, num_timesteps)]
         ie.encode(input_list)
 
         m.run(num_timesteps)
+        vProbes.plot()
+        import matplotlib.pyplot as plt
+        plt.show()
+
         m.disconnect()
         self.assertEqual(True, True)
