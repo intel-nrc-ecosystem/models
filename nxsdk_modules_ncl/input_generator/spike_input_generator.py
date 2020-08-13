@@ -174,7 +174,7 @@ class SpikeInputGenerator(AbstractComposable):
                 'dataChannel_{}_{}'.format(
                     process.chipId,
                     process.lmtId),
-                messageSize=self.packetSize,
+                messageSize=self.packetSize * 4,
                 numElements=self.queueSize * self.packetSize
             )
             self._dataChannels.append(dataChannel)

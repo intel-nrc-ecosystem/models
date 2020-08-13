@@ -33,12 +33,13 @@ static uint32_t packet_size = {{packet_size}};
 static int32_t data[{{packet_size}}*4];
 
 void readNewPacket(){
+  // printf("Reading new packet at %d. \n", time_step);
   pkt_idx = 0;
   readChannel(data_channel_id, data, 1);
 }
 
 int doSpiking(runState *s) {
-    // printf("Do spiking %d ", time_step);
+    // printf("Do spiking %d %d \n", time_step, s->time_step);
     // At first-time_stepstep get all the channelIds
     if (s->time_step == 1){
         data_channel_id = getChannelID("dataChannel_{{chip}}_{{lmt}}");
@@ -56,8 +57,8 @@ int doSpiking(runState *s) {
 }
 
 void runSpiking(runState *s) {
-    // printf("Run spiking %d ", time_step);
-    while(time_step == s->time_step) {  // Process spikes of current timestep.
+    // printf("Run spiking %d \n", time_step);
+    while(time_step == s->time_step) { // Process spikes of current timestep.
       if (pkt_idx == packet_size) readNewPacket();
       uint32_t numCores = data[pkt_idx++]; // Get the third element
       if (pkt_idx == packet_size) readNewPacket();

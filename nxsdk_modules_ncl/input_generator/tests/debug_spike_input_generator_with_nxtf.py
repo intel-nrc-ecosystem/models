@@ -41,7 +41,7 @@ num_steps_per_img = num_input_neurons + 1
 
 nxmodel_composable = ComposableDNN(nxmodel, num_steps_per_img)
 input_generator = SpikeInputGenerator(
-    name='SpikeGen', packetSize=1024, queueSize=64, numSnipsPerChip=1)
+    name='SpikeGen', packetSize=256, queueSize=64, numSnipsPerChip=1)
 input_generator.connect(nxmodel_composable)
 input_generator.processes.inputEncoder.executeAfter(
     nxmodel_composable.processes.reset)
