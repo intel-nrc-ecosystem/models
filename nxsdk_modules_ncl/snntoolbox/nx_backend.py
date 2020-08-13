@@ -17,6 +17,9 @@
 from __future__ import division, absolute_import
 from __future__ import print_function, unicode_literals
 
+import sys
+
+import json
 import os
 import time
 import warnings
@@ -537,10 +540,12 @@ class SNN(AbstractSNN):
         self.snn.disconnect()
 
         if self.profile_performance:
+            stats = self.snn.board.energyTimeMonitor.powerProfileStats
+            print_performance(stats, self._num_timesteps)
+            save_performance_stats(stats, self._logdir, self._num_timesteps)
             plot_execution_time_probe(self._logdir, self._performance_probe)
             plot_energy_probe(self._logdir, self._performance_probe)
             plot_power_probe(self._logdir, self._performance_probe)
-            self.print_performance()
 
     def save(self, path, filename):
         """Write model architecture and parameters to disk.
@@ -1333,34 +1338,47 @@ class SNN(AbstractSNN):
 
         return self.W_MAX / weight_norm
 
-    def print_performance(self):
-        stats = self.snn.board.energyTimeMonitor.powerProfileStats
 
-        lakemont_static = stats['power']['lakemont']['static']
-        lakemont_dynamic = stats['power']['lakemont']['dynamic']
-        core_static = stats['power']['core']['static']
-        core_dynamic = stats['power']['core']['dynamic']
-        total = stats['power']['total']
-        print("Static power (x86): {} mW".format(lakemont_static))
-        print("Dynamic power (x86): {} mW".format(lakemont_dynamic))
-        print("Total power (x86): {} mW".format(lakemont_static +
-                                                lakemont_dynamic))
-        print("Static power (neuro-cores): {} mW".format(core_static))
-        print("Dynamic power (neuro-cores): {} mW".format(core_dynamic))
-        print("Total power (neuro-cores): {} mW".format(core_static +
-                                                        core_dynamic))
-        print("Static power (system): {} mW".format(stats['power']['static']))
-        print("Dynamic power (system): {} mW".format(
-            stats['power']['dynamic']))
-        print("Total power (system): {} mW".format(total))
-        time_per_sample = stats.timePerTimestep * self._num_timesteps / 1e3
-        energy_per_sample = total * time_per_sample / 1e3  # mJ
-        print("Energy per inference: {} mJ".format(energy_per_sample))
-        print("Execution time per inference: {} ms".format(time_per_sample))
-        print("Energy Delay Product: {} uJs".format(energy_per_sample *
-                                                    time_per_sample))
+def print_performance(stats, num_timesteps):
 
-        stats.save(os.path.join(self._logdir, 'performance_stats'))
+    lakemont_static = stats['power']['lakemont']['static']
+    lakemont_dynamic = stats['power']['lakemont']['dynamic']
+    core_static = stats['power']['core']['static']
+    core_dynamic = stats['power']['core']['dynamic']
+    total = stats['power']['total']
+    print("Static power (x86): {} mW".format(lakemont_static))
+    print("Dynamic power (x86): {} mW".format(lakemont_dynamic))
+    print("Total power (x86): {} mW".format(lakemont_static +
+                                            lakemont_dynamic))
+    print("Static power (neuro-cores): {} mW".format(core_static))
+    print("Dynamic power (neuro-cores): {} mW".format(core_dynamic))
+    print("Total power (neuro-cores): {} mW".format(core_static +
+                                                    core_dynamic))
+    print("Static power (system): {} mW".format(stats['power']['static']))
+    print("Dynamic power (system): {} mW".format(stats['power']['dynamic']))
+    print("Total power (system): {} mW".format(total))
+    time_per_sample = stats.timePerTimestep * num_timesteps / 1e3
+    energy_per_sample = total * time_per_sample / 1e3  # mJ
+    print("Energy per inference: {} mJ".format(energy_per_sample))
+    print("Execution time per inference: {} ms".format(time_per_sample))
+    print("Energy Delay Product: {} uJs".format(energy_per_sample *
+                                                time_per_sample))
+
+
+def save_performance_stats(stats, path, num_timesteps):
+    def convert(o):
+        if isinstance(o, np.int64):
+            return int(o)
+        raise TypeError
+
+    with open(os.path.join(path, 'performance_stats'), 'w') as f:
+        json.dump(dict(stats), f, default=convert)
+
+    with open(os.path.join(path, 'performance_summary.txt'), 'w') as f:
+        stdout = sys.stdout
+        sys.stdout = f
+        print_performance(stats, num_timesteps)
+        sys.stdout = stdout
 
 
 def check_q_overflow(weights, p):
