@@ -96,9 +96,7 @@ class SNN(AbstractSNN):
         # '' here.
         self._layer_to_probe = self.config.get('loihi', 'layer_to_probe',
                                                fallback='')
-        # Buffer size should not be a multiple of the run time. Otherwise the
-        # io power reading at the beginning of a run will be disturbed.
-        self._buffer_size = 1023  # self._duration * 2 + 11
+        self._buffer_size = 1024
         self._bin_size = max(1, self._duration // 20)
         self.num_samples = self.config.getint('simulation', 'num_to_test')
         self.normalize_thresholds = self.config.getboolean(
@@ -633,10 +631,8 @@ class SNN(AbstractSNN):
 
             if is_output_layer:
                 # We can use spike probes here instead of activity traces
-                # because the output layer has no shared output axons. But in
-                # case of softmax, we need to probe voltages and convert to
-                # spikes later.
-                probe_type = v if layer.activation.__name__ == 'softmax' else s
+                # because the output layer has no shared output axons.
+                probe_type = s
                 neurons_to_probe = range(num_neurons)
             else:
                 probe_type = a
@@ -701,23 +697,20 @@ class SNN(AbstractSNN):
 
         spiketrains_b_l_t = self.reshape_flattened_spiketrains(probes, shape)
 
+        # In all layers except the output, we use soma traces to infer spikes.
         if is_output_layer:
-            # The read-out snip prevents us from collecting spikes for all time
-            # steps here, so we can't use this code.
-            print("Warning: Probing output layer currently not supported.")
-            if False and layer.activation.__name__ == 'softmax':
-                # If this is the output layer and we are using softmax, we have
-                # probed the voltages and need to encode them in spikes here.
-                return apply_softmax(spiketrains_b_l_t, 1)
-            else:
-                # If no softmax was used, we have probed the spikes directly.
-                return spiketrains_b_l_t
+            if layer.activation.__name__ == 'softmax':
+                # spiketrains_b_l_t will be all zero when using softmax,
+                # because we take the voltage trace as output and set threshold
+                # to max.
+                print("Warning: When using softmax in the output layer, no "
+                      "spikes will be recorded.")
+            return spiketrains_b_l_t
         else:
-            # In all layers except the output, we use soma traces to infer
-            # spikes. Need to integer divide by max value that soma traces
-            # assume, to get rid of the decay tail of the soma trace. The peak
-            # value (marking a spike) is defined as 127 in probe creation and
-            # will be mapped to 1.
+            # Need to integer divide by max value that soma traces assume, to
+            # get rid of the decay tail of the soma trace. The peak value
+            # (marking a spike) is defined as 127 in probe creation and will be
+            # mapped to 1.
             return spiketrains_b_l_t // 127
 
     def get_spiketrains_input(self):
@@ -1365,6 +1358,7 @@ def print_performance(stats, num_timesteps):
     print("Total power (system): {} mW".format(total))
     time_per_sample = stats.timePerTimestep * num_timesteps / 1e3
     energy_per_sample = total * time_per_sample / 1e3  # mJ
+    print("Timesteps per inference: {}".format(num_timesteps))
     print("Energy per inference: {} mJ".format(energy_per_sample))
     print("Execution time per inference: {} ms".format(time_per_sample))
     print("Energy Delay Product: {} uJs".format(energy_per_sample *
@@ -1484,21 +1478,6 @@ def get_spiking_output_layer(layers, config):
     for layer in reversed(layers):
         if is_spiking(layer, config):
             return layer
-
-
-def apply_softmax(x, axis=1):
-    """Apply softmax to voltages of output layer.
-
-    If output layer has softmax activation function, we probe the voltage
-    instead of spikes, apply the softmax on the voltages here, and encode the
-    result in spikes.
-    """
-
-    e = np.exp(x - np.max(x, axis, keepdims=True))
-    s = np.sum(e, axis, keepdims=True)
-    y = e / s
-    z = np.random.random_sample(y.shape)
-    return z < y
 
 
 def apply_modifications(model, custom_objects=None):
