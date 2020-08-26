@@ -71,7 +71,7 @@ class SpikeInputGenerator(AbstractComposable):
         self.queueSize = queueSize
         self._logger = get_logger("NET.INE")
         self._dataChannels = []
-        self.axonMap = {}
+        self.axonMap = None
         self.decoderSnip = os.path.join(
             os.path.dirname(__file__),
             'templates',
@@ -80,9 +80,6 @@ class SpikeInputGenerator(AbstractComposable):
         self._addSnipPlaceholder()
         self._createOutputPort()
         # Setup the snip and channels
-
-    def get_id_from_resource_map(self, id):
-        return self.axonMap[id]
 
     def _addSnipPlaceholder(self):
         """
@@ -174,7 +171,7 @@ class SpikeInputGenerator(AbstractComposable):
                 'dataChannel_{}_{}'.format(
                     process.chipId,
                     process.lmtId),
-                messageSize=self.packetSize,
+                messageSize=self.packetSize * 4,
                 numElements=self.queueSize * self.packetSize
             )
             self._dataChannels.append(dataChannel)
@@ -247,10 +244,7 @@ class SpikeInputGenerator(AbstractComposable):
 
     def _createIdMap(self, addressMap):
         self.chips = sorted(set(addressMap.map.addresses.rows[:, 0]))
-        id = 0
-        for chip, core, axonid in addressMap.map.addresses.rows:
-            self.axonMap[id] = (chip, core, axonid)
-            id += 1
+        self.axonMap = addressMap.map.addresses.rows.astype('uint64')
 
     def map(self, board: Graph) -> 'AbstractComposable':
         addressMap = self.ports[0].connectedPorts[0]().resourceMap
@@ -267,60 +261,69 @@ class SpikeInputGenerator(AbstractComposable):
 
     def split(self, input_list, n_ways):
         length = len(input_list)
-        return [input_list[i * (length // n_ways) + min(i, length %
-                                                        n_ways):(i + 1) * (length // n_ways) + min(i + 1, length %
-                                                                                                   n_ways)] for i in range(n_ways)]
+        sublen, rest = divmod(length, n_ways)
+        return [input_list[i * sublen + min(i, rest):
+                           (i + 1) * sublen + min(i + 1, rest)]
+                for i in range(n_ways)]
 
     def encode(self, inputs):
         """
         Encode input into spikes
         Input is list of (id, t)
         """
-        input_by_chip = {}
-        channelIdx = 0
-        # Group the spikes according to target chip
-        for id, t in inputs:
-            chip, core, axonid = self.get_id_from_resource_map(id)
-            input_by_chip.setdefault(chip, []).append((core, axonid, t))
 
-        # Sort the spikes per chip according to time, core, axons
-        # Also group them by lmt which will be used to inject the spike
-        for chip in input_by_chip.keys():
-            input_by_chip[chip] = self.split(
-                sorted(
-                    input_by_chip[chip],
-                    key=lambda inp: (
-                        inp[2],
-                        inp[0],
-                        inp[1])),
-                self.numLmts)
+        inputs_encoded = self.prepare_encoding(inputs)
 
-            for input_per_snip in input_by_chip[chip]:
-                input_per_snip.append([0, 0, -1])
+        self.send_inputs(inputs_encoded)
 
-            # Iterating over list of input spikes per snip
-            for snip in input_by_chip[chip]:
-                # Key is time and Value is (core, axonid)
-                input_per_snip_per_chip = OrderedDict()
-                input_to_be_send = []
-                for core, axon, t in snip:
-                    input_per_snip_per_chip.setdefault(
-                        t, []).append((core, axon))
+    def prepare_encoding(self, inputs):
 
-                for time, core_spike_list in input_per_snip_per_chip.items():
-                    input_per_time_core = OrderedDict()
-                    input_to_be_send.append(time)
-                    input_to_be_send.append(len(core_spike_list))
-                    for core, axon in core_spike_list:
-                        input_per_time_core.setdefault(core, []).append(axon)
-                    for core, axonlist in input_per_time_core.items():
-                        input_to_be_send.append(core)
-                        input_to_be_send.append(len(axonlist))
-                        input_to_be_send.extend(axonlist)
+        inputs = np.array(inputs)
 
-                self._dataChannels[channelIdx].write(
-                    math.ceil(
-                        len(input_to_be_send) /
-                        self.packetSize),
-                    input_to_be_send)
-                channelIdx += 1
+        input_addresses = self.axonMap[inputs[:, 0]]
+        inputs_encoded = OrderedDict()
+        # Group the spikes according to target chip.
+        for chip in self.chips:
+            chip_mask = input_addresses[:, 0] == chip
+            core_axon_ids = input_addresses[chip_mask, 1:]
+            timesteps = inputs[chip_mask, 1]
+            inputs_per_chip = np.column_stack([core_axon_ids, timesteps])
+
+            # Sort the spikes per chip according to time, core, axons.
+            sort_idxs = np.lexsort((core_axon_ids[:, 0], timesteps))
+            # Also group them by lmt which will be used to inject the spikes.
+            inputs_per_cpu = self.split(inputs_per_chip[sort_idxs],
+                                        self.numLmts)
+
+            inputs_per_chip_encoded = OrderedDict()
+            # Iterating over list of input spikes per snip.
+            for lmt_id, input_per_cpu in enumerate(inputs_per_cpu):
+                input_per_cpu_encoded = []
+                for t in np.unique(input_per_cpu[:, 2]):
+                    timestep_mask = input_per_cpu[:, 2] == t
+                    core_axon_ids = input_per_cpu[timestep_mask, :2]
+
+                    input_per_cpu_encoded.append(t)
+                    core_axon_map = []
+                    for core in np.unique(core_axon_ids[:, 0]):
+                        core_mask = core_axon_ids[:, 0] == core
+                        core_axon_map.append(
+                            (core, list(core_axon_ids[core_mask, 1])))
+                    input_per_cpu_encoded.append(len(core_axon_map))
+                    for core, axon_ids in core_axon_map:
+                        input_per_cpu_encoded.append(core)
+                        input_per_cpu_encoded.append(len(axon_ids))
+                        input_per_cpu_encoded.extend(axon_ids)
+                inputs_per_chip_encoded[lmt_id] = input_per_cpu_encoded
+            inputs_encoded[chip] = inputs_per_chip_encoded
+
+        return inputs_encoded
+
+    def send_inputs(self, inputs):
+        channel_idx = 0
+        for inputs_per_chip in inputs.values():
+            for inputs_per_cpu in inputs_per_chip.values():
+                num_packets = math.ceil(len(inputs_per_cpu) / self.packetSize)
+                self._dataChannels[channel_idx].write(num_packets,
+                                                      inputs_per_cpu)
+                channel_idx += 1

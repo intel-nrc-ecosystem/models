@@ -33,11 +33,13 @@ static uint32_t packet_size = {{packet_size}};
 static int32_t data[{{packet_size}}*4];
 
 void readNewPacket(){
+  // printf("Reading new packet at %d. \n", time_step);
   pkt_idx = 0;
   readChannel(data_channel_id, data, 1);
 }
 
 int doSpiking(runState *s) {
+    // printf("Do spiking %d %d \n", time_step, s->time_step);
     // At first-time_stepstep get all the channelIds
     if (s->time_step == 1){
         data_channel_id = getChannelID("dataChannel_{{chip}}_{{lmt}}");
@@ -55,20 +57,23 @@ int doSpiking(runState *s) {
 }
 
 void runSpiking(runState *s) {
-    while(time_step == s->time_step) {
+    // printf("Run spiking %d \n", time_step);
+    while(time_step == s->time_step) { // Process spikes of current timestep.
       if (pkt_idx == packet_size) readNewPacket();
-      uint32_t numAxonSpikes = data[pkt_idx++]; // Get the third element
+      uint32_t numCores = data[pkt_idx++]; // Get the third element
       if (pkt_idx == packet_size) readNewPacket();
-      for (int j=0; j<numAxonSpikes; j++){
+      for (int j=0; j<numCores; j++){ // Iterate over all cores containing spikes.
         CoreId coreId = (CoreId) {.id = data[pkt_idx++]}; // Get the next element
         if (pkt_idx == packet_size) readNewPacket();
         uint32_t numAxons = data[pkt_idx++];
         if (pkt_idx == packet_size) readNewPacket();
-          for (int k=0; k< numAxons; k++){
-            uint32_t axonId = data[pkt_idx++];// Get the next element
-            if (pkt_idx == packet_size) readNewPacket();
-            nx_send_remote_event(time_step, nx_my_chipid(), coreId, axonId);
-          }
+        for (int k=0; k<numAxons; k++){ // Iterate over all axons on current core that contain spikes.
+          uint32_t axonId = data[pkt_idx++]; // Get the next element
+          if (pkt_idx == packet_size) readNewPacket();
+          // printf("Sending spike at time %d to core %d via axon %d, chip %d.\n", time_step, coreId.id, axonId, nx_my_chipid().id);
+          axonId = 1<<14|axonId;
+          nx_send_remote_event(time_step, nx_my_chipid(), coreId, axonId);
+        }
       }
       if (pkt_idx == packet_size) readNewPacket();
       time_step = data[pkt_idx++]; // Get the second element

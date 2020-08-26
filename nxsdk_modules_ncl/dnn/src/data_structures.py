@@ -118,6 +118,31 @@ class Layer:
 
         return cxResourceMap
 
+    def genInputAxonResourceMap(self):
+        """Generate a resource map for input axons.
+
+        Maps from global layer-wide input axon id to its
+        ``(chipId, coreId, axonId)`` address.
+
+        :raises AssertionError: Layer must be mapped before resource map can
+            be generated.
+
+        :return: inputAxonResourceMap
+        :rtype: np.ndarray
+        """
+
+        assert self._isMapped, \
+            "Layer must be mapped before InputAxonResourceMap can be " \
+            "generated."
+
+        resourceMap = []
+        for p in self.partitions:
+            for axonGroup in p.inputAxonGroups:
+                for axonId in axonGroup.srcNodeIds:
+                    resourceMap.append([p.chipId, p.coreId, axonId])
+
+        return np.array(resourceMap, int)
+
     def addPartition(self, partition):
         """Add partition to layer, and update cost properties.
 
@@ -414,11 +439,12 @@ def loadMappableLayers(path):
     # parent by the actual parent layer. (When saving the partition candidate,
     # we set layer.postLayer = layer.postLayer.id, to avoid redundant storage.)
     for layer in layers.values():
+        postLayerName = layer.postLayer
         # Skip output layer, whose postLayer is actually still the dummy
         # partition, not an id.
-        if isinstance(layer.postLayer, Layer):
+        if isinstance(postLayerName, Layer):
             continue
-        postLayerName = layer.postLayer
+        assert isinstance(postLayerName, str)
         layer.postLayer = layers[postLayerName]
         layerNames.remove(postLayerName)
 
@@ -451,13 +477,13 @@ class Partition:
     :param bool isInhibitory: Flag to identify inhibitory partitions in complex
         layers.
     :param str resetMode: Sets reset mode for rate-coded layers. If 'hard',
-        when a neuron spikes the membrane potential is reset to zero. If 'soft',
-        when a neuron spikes the threshold will be subtracted from the
+        when a neuron spikes the membrane potential is reset to zero. If
+        'soft', when a neuron spikes the threshold will be subtracted from the
         membrane threshold.
     """
 
     def __init__(self, partitionId, chipCounter, sizeInterleaved, parentLayer,
-                 inInhibitory=False, resetMode='hard'):
+                 isInhibitory=False, resetMode='hard'):
 
         assert isinstance(parentLayer, Layer)
 
@@ -487,7 +513,7 @@ class Partition:
         self.chipId = None
         self.coreId = None
 
-        self._isInhibitory = inInhibitory
+        self._isInhibitory = isInhibitory
         self._resetMode = resetMode
 
     # -------------------------------------------------------------------------

@@ -406,7 +406,7 @@ class SynapseEncoder:
 
         if self.useSharedSign:
             idxPos = weights >= 0
-            idxNeg = ~idxPos
+            idxNeg = np.logical_not(idxPos)
             kernelIdsPos = None if kernelIds is None else kernelIds[idxPos]
             kernelIdsNeg = None if kernelIds is None else kernelIds[idxNeg]
             encodeFct(synIds[idxPos], weights[idxPos], cIdxOffset, cIdxMult, 2,

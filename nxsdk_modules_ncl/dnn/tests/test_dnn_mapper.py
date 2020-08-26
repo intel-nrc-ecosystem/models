@@ -26,7 +26,7 @@ from nxsdk_modules_ncl.dnn.src.dnn_mapper import DnnMapper
 from nxsdk_modules_ncl.dnn.src.optimization import getDummyLayer
 
 
-class Test_DnnMapper(unittest.TestCase):
+class TestDnnMapper(unittest.TestCase):
     """Test DNN mapper."""
 
     def test_init(self):
@@ -949,7 +949,7 @@ class Test_DnnMapper(unittest.TestCase):
 
 
 def main():
-    support.run_unittest(Test_DnnMapper)
+    support.run_unittest(TestDnnMapper)
 
 
 if __name__ == '__main__':

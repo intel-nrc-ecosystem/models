@@ -21,17 +21,17 @@ from __future__ import print_function
 import os
 import time
 
-import keras
-from keras import backend, layers, models, regularizers
-from keras.applications import MobileNet
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
-from keras.datasets import cifar10
-from keras.optimizers import Adam
-from keras.utils import to_categorical
-from keras.preprocessing.image import ImageDataGenerator
-from keras.constraints import Constraint
-from keras.layers import ReLU
-import keras.backend as K
+from tensorflow import keras
+from tensorflow.keras import backend, layers, models, regularizers
+from tensorflow.keras.applications import MobileNet
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from tensorflow.keras.datasets import cifar10
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.constraints import Constraint
+from tensorflow.keras.layers import ReLU
+import tensorflow.keras.backend as K
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 

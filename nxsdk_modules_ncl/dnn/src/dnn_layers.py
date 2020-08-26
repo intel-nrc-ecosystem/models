@@ -27,17 +27,16 @@ from enum import IntEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
-from keras.engine import InputLayer
-from keras.layers import Conv2D, DepthwiseConv2D, Dense, AveragePooling2D, \
-    Flatten, Conv1D, ZeroPadding2D, Reshape
-from keras.models import Model, load_model
+from tensorflow.keras.layers import Conv2D, DepthwiseConv2D, Dense, \
+    AveragePooling2D, Flatten, Conv1D, ZeroPadding2D, Reshape, InputLayer
+from tensorflow.keras.models import Model, load_model
 from scipy.sparse import lil_matrix, load_npz, save_npz
 
 # Import plotting modules first to ensure plt backend is set correctly.
-from nxsdk_modules_ncl.dnn.src.plotting import plot_multiplicity, plot_coreIdMap, \
-    plot_core_occupancy, plot_layer_partition, plot_core_utilization, \
-    plot_exclusion_criteria_hit_count, visualize_partitions, plot_cost_graph, \
-    plot_cost_terms, plot_cx_syn
+from nxsdk_modules_ncl.dnn.src.plotting import plot_multiplicity, \
+    plot_coreIdMap, plot_core_occupancy, plot_layer_partition, \
+    plot_core_utilization, plot_exclusion_criteria_hit_count, \
+    visualize_partitions, plot_cost_graph, plot_cost_terms, plot_cx_syn
 from nxsdk_modules_ncl.dnn.src.data_structures import Layer, Partition, \
     SynapseGroup, OutputAxonGroup, CompartmentGroup, InputAxonGroup, \
     serializeLayer, deserializeLayer
@@ -64,7 +63,7 @@ NX_KWARGS = ['numWeightBits', 'synapseEncoding', 'biasExp', 'vThMant',
              'validatePartitions', 'logger', 'probeSpikes', 'threshOp',
              'saveOutput', 'compartmentKwargs', 'connectionKwargs',
              'resetMode', 'weightExpSoftReset', 'numBiasBits', '_padding',
-             '_zeroPadding', '_signed']
+             '_zeroPadding', '_signed', 'inputMode']
 
 # Todo: Add and test soft-reset for all spiking layers.
 SOFT_RESET_LAYERS = {'NxConv2D', 'NxInputLayer', 'NxConv1D',
@@ -72,6 +71,18 @@ SOFT_RESET_LAYERS = {'NxConv2D', 'NxInputLayer', 'NxConv1D',
                      'NxDense'}
 
 CxAddr = collections.namedtuple('CxAddr', ['chipId', 'coreId', 'cxId'])
+
+
+def fix_input_layer_shape(shape):
+    """
+    tf.keras.models.load_model function introduced a bug that wraps the input
+    tensors and shapes in a single-entry list, i.e.
+    output_shape == [(None, 1, 28, 28)]. Thus we have to apply [0] here.
+    """
+
+    if len(shape) == 1:
+        return shape[0]
+    return shape
 
 
 def removeNxKwargs(kwargs):
@@ -97,6 +108,13 @@ class ProbableStates(IntEnum):
     SPIKE = 2
     ACTIVITY = 3
     PHASE = 4
+
+
+class InputModes(IntEnum):
+    """Enumeration of input modes for NxModels."""
+
+    BIAS = 0
+    AEDAT = 1
 
 
 class CompartmentInterface:
@@ -304,7 +322,10 @@ def compileConvlike(self, partitionCandidate):
     # is doubled.
     signedInput = False
     if len(self._inbound_nodes[:1]):
-        layer = self._inbound_nodes[0].inbound_layers[0]
+        layer = self._inbound_nodes[0].inbound_layers
+        # layer may be wrapped in a list of lenght 1:
+        if isinstance(layer, (list, tuple)):
+            layer = layer[0]
         if hasattr(layer, 'signed'):
             if layer.signed:
                 signedInput = True
@@ -314,7 +335,8 @@ def compileConvlike(self, partitionCandidate):
     # Not used in actual spiking layer.
     if self._zeroPadding is not None:
         py0, py1, px0, px1 = self._zeroPadding
-        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1), inputShape[2])
+        inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1),
+                      inputShape[2])
 
     inputSize = np.asscalar(np.prod(inputShape))
     layerShape = partitionCandidate.coreIdMap.shape
@@ -323,7 +345,6 @@ def compileConvlike(self, partitionCandidate):
     isDepthwise = 'Depthwise' in layerType or 'Pooling' in layerType
 
     connKwargs = partitionCandidate.connectionKwargs
-    sharedCfgs = partitionCandidate.compartmentKwargs
     limits = self.exclusionCriteria
 
     # Get number of cores used by network so far. Needed for Partition
@@ -377,6 +398,9 @@ def compileConvlike(self, partitionCandidate):
         kMap.rows = self.kernelIdMap.rows[maskFlat]
         kMap.data = self.kernelIdMap.data[maskFlat]
 
+        # The neuronSize is the number of compartments per neuron.
+        neuronSize = 2 if self.resetMode == 'soft' else 1
+
         # Interleaving #
         ################
 
@@ -385,14 +409,12 @@ def compileConvlike(self, partitionCandidate):
 
         numDestinationGroups = len(destinationGroups)
 
-        if numDestinationGroups > limits.maxNumDestinationGroups:
+        if numDestinationGroups * neuronSize > limits.maxNumDestinationGroups:
             limits.numDestinationGroups += 1
             return
 
         # Compute interleaved size already before interleaving, so we can skip
-        # costly interleaving if size too large. The neuronSize is the number
-        # of compartments per neuron.
-        neuronSize = 2 if self.resetMode == 'soft' else 1
+        # costly interleaving if size too large.
 
         coreSizeInterleaved = _getSizeInterleaved(coreShape, destinationGroups,
                                                   neuronSize)
@@ -410,7 +432,7 @@ def compileConvlike(self, partitionCandidate):
         assert max(permutedDestCxIdxs) <= coreSizeInterleaved
 
         permCxIdToRelCxId = np.array([np.where(permutedDestCxIdxs == i)[0]
-                                   for i in range(coreSizeInterleaved)])
+                                      for i in range(coreSizeInterleaved)])
 
         cIdxMult = numDestinationGroups - 1
 
@@ -441,7 +463,7 @@ def compileConvlike(self, partitionCandidate):
         srcIdMap = partitionCandidate.postLayer.srcIdMap
         multiplicityInterleaved = np.zeros(coreSizeInterleaved, int)
         multiplicityInterleaved[permutedDestCxIdxs] = \
-        multiplicityFlat[relToAbsDestCxIdxMap]
+            multiplicityFlat[relToAbsDestCxIdxMap]
 
         if len(srcIdMap):
             inverseMap = {}
@@ -489,42 +511,27 @@ def compileConvlike(self, partitionCandidate):
 
             synEntriesOfCore.append(synEntriesOfSourceGroup)
 
-        # synEntries and synFmts for recurrent connections
+        # Create synEntries and synFmts for recurrent connections.
+        mappedCxIds = {}
         if self.resetMode == 'soft':
-            # If output layer, create synapse groups.
-            if not len(srcIdMap):
-                inverseMap = {relCxId: ([cxId], [0])
-                              for relCxId, cxId in enumerate(permutedDestCxIdxs)}
-
-            # To ensure only one recurrent connection per neuron, duplicated
-            # recurrent connections receive 0 weight.
-            cxIdMap = {}
-            mappedCxIds = {}
+            wgt = -connKwargs['weightMantSR']
             synGrpId = len(uniqueSourceGroups)
-            for _, (cxIds, relSrcIds) in inverseMap.items():
-                cxIdHash = hash(tuple(cxIds))
+            relSrcId = 0
+            for cxId in permutedDestCxIdxs:
+                cxIdHash = hash((cxId,))
                 if cxIdHash in mappedCxIds:
                     continue
-                mappedCxIds[cxIdHash] = (synGrpId, cxIds, relSrcIds)
+                mappedCxIds[cxIdHash] = (synGrpId, [cxId], [relSrcId])
                 synGrpId += 1
-                synEntriesOfRecurrentGroup = []
-                for cxId, relSrcId in zip(cxIds, relSrcIds):
-                    wgt = -connKwargs['weightMantSR']
-                    if cxId in cxIdMap:
-                        wgt = 0
-                    cxIdMap[cxId] = 1
-                    # wgt is set by mapper based on vThMant and scale
-                    synapseEncoder.encode(np.array([cxId], int) * 2,
-                                          np.array([wgt], int),
-                                          0,
-                                          0,
-                                          np.array([1], int),
-                                          softReset=True)
+                # wgt is set by mapper based on vThMant and scale
+                synapseEncoder.encode(np.array([cxId], int) * 2,
+                                      np.array([wgt], int),
+                                      0,
+                                      0,
+                                      np.array([1], int),
+                                      softReset=True)
 
-                    synEntriesOfRecurrentGroup.append(
-                        synapseEncoder.popSynEntries())
-
-                synEntriesOfCore.append(synEntriesOfRecurrentGroup)
+                synEntriesOfCore.append([synapseEncoder.popSynEntries()])
 
         synFmts, synEntryMap = compressSynFmts(synapseEncoder.getSynFmts(),
                                                limits.maxNumSynFmt)
@@ -578,6 +585,7 @@ def compileConvlike(self, partitionCandidate):
             # Get subset of srcIds that have connections in current core.
             _srcIds = np.arange(sourceGroupSize) + sourceGroupSize * axonId
             srcIds = np.intersect1d(srcIdsOfCore, _srcIds, True)
+            assert isinstance(srcIds, np.ndarray)
 
             inputAxonGroup = InputAxonGroup(
                 srcIds, preMultiplicityFlat[srcIds], synapseGroup,
@@ -653,19 +661,21 @@ def compileConvlike(self, partitionCandidate):
 
             # Add dummy neurons
             outputSize = np.prod(self.output_shape[1:]).astype(int)
-            numCx = len(relToAbsDestCxIdxMap)
             maxCxId = max(permutedDestCxIdxs) + 1
             mod = maxCxId % 4
-            permutedDestCxIdxs = np.concatenate([permutedDestCxIdxs,
-                                                 [maxCxId + i for i in range(mod)]]).astype(int)
-            cxIds = [outputSize * neuronSize + self._dummyCxSize + i for i in range(mod)]
+            permutedDestCxIdxs = np.concatenate(
+                [permutedDestCxIdxs,
+                 [maxCxId + i for i in range(mod)]]).astype(int)
+            cxIds = [outputSize * neuronSize + self._dummyCxSize + i
+                     for i in range(mod)]
             relToAbsDestCxIdxMap = np.concatenate([relToAbsDestCxIdxMap,
                                                    cxIds]).astype(int)
-            biasesOfCore = np.concatenate([tempBiases, np.zeros(mod)]).astype(int)
-            biasExpOfCore = np.concatenate([tempBiasExp, np.zeros(mod)]).astype(int)
+            biasesOfCore = np.concatenate([tempBiases,
+                                           np.zeros(mod)]).astype(int)
+            biasExpOfCore = np.concatenate([tempBiasExp,
+                                            np.zeros(mod)]).astype(int)
             self._dummyCxSize += mod
             coreSizeInterleaved += mod
-
 
         biasesInterleaved = np.zeros(coreSizeInterleaved, int)
         biaseExpInterleaved = np.zeros(coreSizeInterleaved, int)
@@ -799,8 +809,8 @@ class NxLayer(object):
         softmax in the ANN, may want to set threshOp to 3 (no spike and
         saturate voltage at threshold), to avoid overflow but preserve order.
     :param str resetMode: Sets reset mode for rate-coded layers. If 'hard',
-        when a neuron spikes the membrane potential is reset to zero. If 'soft',
-        when a neuron spikes the threshold will be subtracted from the
+        when a neuron spikes the membrane potential is reset to zero. If
+        'soft', when a neuron spikes the threshold will be subtracted from the
         membrane threshold.
     """
 
@@ -858,7 +868,7 @@ class NxLayer(object):
 
         self._compartmentDefaults = {'functionalState': 2,
                                      'compartmentVoltageDecay': 0,
-                                     'compartmentCurrentDecay': 4096,
+                                     'compartmentCurrentDecay': 4095,
                                      'refractoryDelay': 1}
 
         self.compartmentKwargs.update(self._compartmentDefaults)
@@ -886,29 +896,32 @@ class NxLayer(object):
             resetMode = 'hard'
         self._resetMode = resetMode
 
-        if resetMode == 'soft' and activation != 'softmax':
-            # The weight mantissa and exponent for the recurrent
-            # connections used in subtractive-reset are computed
-            # to as close as possible to the vThMant.
-            wgtExp = int(np.ceil(np.log2(vThMant / 256)))
+        if resetMode == 'soft':
+            if activation == 'softmax':
+                self.connectionKwargs.update(
+                    {'weightExpSR': 0,
+                     'weightMantSR': 255})
+            else:
+                # The weight mantissa and exponent for the recurrent
+                # connections used in subtractive-reset are computed to as
+                # close as possible to the vThMant.
+                wgtExp = int(np.ceil(np.log2(vThMant / 256)))
 
-            if wgtExp > 7:
-                print("WgtExp {} exceeds W_EXP_MAX={}".format(
-                    wgtExp, 7))
-                wgtExp = 7
+                if wgtExp > 7:
+                    print("WgtExp {} exceeds W_EXP_MAX={}".format(wgtExp, 7))
+                    wgtExp = 7
 
-                print("vThMant {} exceeds the max value {} which may "
-                      "be subtracted using recurrent connections.".format(
-                    vThMant, 255*2**7
-                ))
+                    print("vThMant {} exceeds the max value {} which may "
+                          "be subtracted using recurrent connections.".format(
+                            vThMant, 255*2**7))
 
-            wgtExp = np.max([0, wgtExp])
-            wgtMant = int(np.rint(vThMant / 2 ** wgtExp))
-            wgtMant = np.max([0, wgtMant])
-            wgtMant = np.min([wgtMant, 255])
-            self.connectionKwargs.update(
-                {'weightExpSR': wgtExp,
-                 'weightMantSR': wgtMant})
+                wgtExp = np.max([0, wgtExp])
+                wgtMant = int(np.rint(vThMant / 2 ** wgtExp))
+                wgtMant = np.max([0, wgtMant])
+                wgtMant = np.min([wgtMant, 255])
+                self.connectionKwargs.update(
+                    {'weightExpSR': wgtExp,
+                     'weightMantSR': wgtMant})
 
         if activation == 'softmax':
             # Set threshOp to 3 so that the compartment does not spike
@@ -918,12 +931,6 @@ class NxLayer(object):
             self.compartmentKwargs['vThMant'] = 2**17 - 1
             # Add decay to prevent saturation.
             self.compartmentKwargs['compartmentVoltageDecay'] = 2**8
-
-            if resetMode == 'soft':
-                self.connectionKwargs.update(
-                    {'weightExpSR': 0,
-                     'weightMantSR': 255})
-
 
         # Override if passed connection and compartment kwargs.
         # Used when loading an existing NxModel.
@@ -1178,8 +1185,8 @@ class NxLayer(object):
         if self.cxResourceMap is None:
             return
         for chipId, coreId in np.unique(self.cxResourceMap[:, :2], axis=0):
-            inds = np.all(self.cxResourceMap[:, :2] == np.array([chipId, coreId]),
-                          axis=1)
+            inds = np.all(self.cxResourceMap[:, :2] ==
+                          np.array([chipId, coreId]), axis=1)
             maxCxId = np.max(self.cxResourceMap[inds][:, 2])
             numCxGroups = int(np.ceil((maxCxId + 1) / 4))
             core = self._board.chipMap[chipId].coreMap[coreId]
@@ -1230,7 +1237,7 @@ class NxConv2D(NxLayer, Conv2D):
     def build(self, input_shape):
         Conv2D.build(self, input_shape)
 
-        self._padding = _getPadding(input_shape[1:], self.padding,
+        self._padding = _getPadding(input_shape.as_list()[1:], self.padding,
                                     self.kernel_size, self.strides,
                                     self.dilation_rate)
 
@@ -1239,13 +1246,17 @@ class NxConv2D(NxLayer, Conv2D):
         # When using signed spikes the number of channels in the input
         # is doubled.
         if len(self._inbound_nodes[:1]):
-            layer = self._inbound_nodes[0].inbound_layers[0]
+            layer = self._inbound_nodes[0].inbound_layers
+            # layer may be wrapped in a list of lenght 1:
+            if isinstance(layer, (list, tuple)):
+                layer = layer[0]
             if hasattr(layer, 'signed'):
                 if layer.signed:
                     inputShape = inputShape[:-1] + (2 * inputShape[-1],)
         return _genKernelIdMap(inputShape, self.output_shape[1:],
                                self._padding, self.strides, self.kernel_size,
-                               self.dilation_rate, zeroPadding=self.zeroPadding)
+                               self.dilation_rate,
+                               zeroPadding=self.zeroPadding)
 
     def getMultiplicityMap(self, coreIdMap):
         """Generate multiplicity map.
@@ -1319,13 +1330,13 @@ class NxConv2D(NxLayer, Conv2D):
 
     @property
     def zeroPadding(self):
-        """Zero padding of previous layer. Used to accoung to ZeroPadding Layers."""
+        """Zero padding of previous layer. Replaces ZeroPadding Layers."""
         return self._zeroPadding
 
     @zeroPadding.setter
     def zeroPadding(self, zeroPadding):
-        """ Set zeroPadding and add to padding.
-         :param tuple (int) zeroPadding: Tuple of ints with padding values. """
+        """Set zeroPadding and add to padding.
+         :param tuple (int) zeroPadding: Tuple of ints with padding values."""
         py0, py1, px0, px1 = zeroPadding
         p0, p1, p2, p3 = self._padding
         self._padding = (p0 + py0, p1 + py1, p2 + px0, p3 + px1)
@@ -1379,13 +1390,53 @@ class NxConv1D(NxLayer, Conv1D):
     def build(self, input_shape):
         Conv1D.build(self, input_shape)
 
-        self._input_shape3D = (input_shape[1], 1, input_shape[2])
+        self._input_shape3D = (int(input_shape[1]), 1, int(input_shape[2]))
         self._kernel_shape2D = (self.kernel_size[0], 1)
         self._strides2D = (self.strides[0], 1)
         self._dilation_rate2D = (self.dilation_rate[0], 1)
         self._padding2D = _getPadding(self._input_shape3D, self.padding,
                                       self._kernel_shape2D, self._strides2D,
                                       self._dilation_rate2D)
+
+    def call(self, inputs):
+        # The only reason we need to override the call method is because the
+        # class name 'NxConv1D' would be falsely missed in the condition
+        # if self.padding == 'causal' and self.__class__.__name__ == 'Conv1D':
+        # below.
+        from tensorflow.python.ops import array_ops
+        from tensorflow.python.ops import nn
+        from tensorflow.python.ops import nn_ops
+
+        if self._recreate_conv_op(inputs):
+            self._convolution_op = nn_ops.Convolution(
+                inputs.get_shape(),
+                filter_shape=self.kernel.shape,
+                dilation_rate=self.dilation_rate,
+                strides=self.strides,
+                padding=self._padding_op,
+                data_format=self._conv_op_data_format)
+
+        # Apply causal padding to inputs for Conv1D.
+        if self.padding == 'causal' and 'Conv1D' in self.__class__.__name__:
+            inputs = array_ops.pad(inputs, self._compute_causal_padding())
+
+        outputs = self._convolution_op(inputs, self.kernel)
+
+        if self.use_bias:
+            if self.data_format == 'channels_first':
+                if self.rank == 1:
+                    # nn.bias_add does not accept a 1D input tensor.
+                    bias = array_ops.reshape(self.bias, (1, self.filters, 1))
+                    outputs += bias
+                else:
+                    outputs = nn.bias_add(outputs, self.bias,
+                                          data_format='NCHW')
+            else:
+                outputs = nn.bias_add(outputs, self.bias, data_format='NHWC')
+
+        if self.activation is not None:
+            return self.activation(outputs)
+        return outputs
 
     def genKernelIdMap(self):
         output_shape3D = (self.output_shape[1], 1, self.output_shape[2])
@@ -1494,27 +1545,44 @@ class NxDepthwiseConv2D(NxLayer, DepthwiseConv2D):
             raise NotImplementedError
 
         # Padding tuple
-        self._padding = None
+        self._padding = kwargs.get('_padding', None)
+        self._zeroPadding = kwargs.get('_zeroPadding', None)
 
     def get_config(self):
-        config = {}
+        config = {'_padding': self.padding,
+                  '_zeroPadding': self._zeroPadding}
         baseConfig = DepthwiseConv2D.get_config(self)
         baseConfig2 = NxLayer.get_config(self)
         config.update(baseConfig)
         config.update(baseConfig2)
         return config
 
+    @property
+    def zeroPadding(self):
+        """Zero padding of previous layer. Replaces ZeroPadding Layers."""
+        return self._zeroPadding
+
+    @zeroPadding.setter
+    def zeroPadding(self, zeroPadding):
+        """Set zeroPadding and add to padding.
+         :param tuple (int) zeroPadding: Tuple of ints with padding values."""
+        py0, py1, px0, px1 = zeroPadding
+        p0, p1, p2, p3 = self._padding
+        self._padding = (p0 + py0, p1 + py1, p2 + px0, p3 + px1)
+        self._zeroPadding = zeroPadding
+
     def build(self, input_shape):
         DepthwiseConv2D.build(self, input_shape)
 
-        self._padding = _getPadding(input_shape[1:], self.padding,
+        self._padding = _getPadding(input_shape.as_list()[1:], self.padding,
                                     self.kernel_size, self.strides,
                                     self.dilation_rate)
 
     def genKernelIdMap(self):
         return _genKernelIdMap(self.input_shape[1:], self.output_shape[1:],
                                self._padding, self.strides, self.kernel_size,
-                               self.dilation_rate, True)
+                               self.dilation_rate, True,
+                               zeroPadding=self.zeroPadding)
 
     def getMultiplicityMap(self, coreIdMap):
         """Generate multiplicity map.
@@ -1530,7 +1598,8 @@ class NxDepthwiseConv2D(NxLayer, DepthwiseConv2D):
 
         return _getMultiplicityMapConvlike(coreIdMap, self.input_shape[1:],
                                            self.kernel_size, self.strides,
-                                           self._padding, self.dilation_rate)
+                                           self._padding, self.dilation_rate,
+                                           zeroPadding=self.zeroPadding)
 
     def getPartitionCandidates(self):
         """Get possible partition configurations for a layer.
@@ -1616,13 +1685,14 @@ class NxAveragePooling2D(NxLayer, AveragePooling2D):
         return config
 
     def build(self, input_shape):
-        self._padding = _getPadding(input_shape[1:], self.padding,
+        input_shape_list = input_shape.as_list()
+        self._padding = _getPadding(input_shape_list[1:], self.padding,
                                     self.pool_size, self.strides, (1, 1))
 
-        output_shape = self.compute_output_shape(input_shape)
+        output_shape = self.compute_output_shape(input_shape_list)
 
         # Add weights and biases.
-        inChannels = input_shape[-1]
+        inChannels = input_shape_list[-1]
         outChannels = output_shape[-1]
         weightShape = self.pool_size + (inChannels, outChannels)
         self.add_weight('W', weightShape, initializer='ones', trainable=False)
@@ -1787,7 +1857,10 @@ class NxDense(NxLayer, Dense):
         weights, biases = self.get_weights()
 
         if len(self._inbound_nodes):
-            prevLayer = self._inbound_nodes[0].inbound_layers[0]
+            prevLayer = self._inbound_nodes[0].inbound_layers
+            # prevLayer may be wrapped in a list of lenght 1:
+            if isinstance(prevLayer, (list, tuple)):
+                prevLayer = prevLayer[0]
             if 'Flatten' in prevLayer.__class__.__name__:
                 shape = prevLayer.input_shape[1:]
                 idxs = np.arange(int(np.prod(shape)))
@@ -1799,7 +1872,7 @@ class NxDense(NxLayer, Dense):
             partitionCandidate.compartmentKwargs['biasExp']
 
         neuronSize = 2 if self.resetMode == 'soft' else 1
-        somaOffset = 1 if self.resetMode == 'soft' else 0
+        # somaOffset = 1 if self.resetMode == 'soft' else 0
 
         # Iterate over cores #
         ######################
@@ -1831,7 +1904,8 @@ class NxDense(NxLayer, Dense):
 
                 kernelIds = cxIds + 1
                 wgts = weights[i, cxIds]
-                synapseEncoder.encode(relCxIds * neuronSize, wgts, 0, 0, kernelIds)
+                synapseEncoder.encode(relCxIds * neuronSize, wgts, 0, 0,
+                                      kernelIds)
 
                 synEntriesOfSourceGroup = [synapseEncoder.popSynEntries()]
 
@@ -1901,14 +1975,13 @@ class NxDense(NxLayer, Dense):
             # Input Axons #
             ###############
             recurrentSize = len(relCxIds) if self.resetMode == 'soft' else 0
-            inputAxonMultiplicity = np.concatenate([preMultiplicityFlat,
-                                                    np.ones(recurrentSize) * 2])
+            inputAxonMultiplicity = np.concatenate(
+                [preMultiplicityFlat, np.ones(recurrentSize) * 2])
             for axonId, synapseGroup in enumerate(partition.synapseGroups):
-                id = axonId % inputSize
+                srcNodeIds = np.array([axonId % inputSize], int)
                 inputAxonGroup = InputAxonGroup(
-                    np.array([id], int),
-                    inputAxonMultiplicity[axonId: axonId + 1], synapseGroup, 0,
-                    partition)
+                    srcNodeIds, inputAxonMultiplicity[axonId: axonId + 1],
+                    synapseGroup, 0, partition)
 
                 partition.addInputAxonGroup(inputAxonGroup)
 
@@ -1929,9 +2002,8 @@ class NxDense(NxLayer, Dense):
 
                 for postPartition in partitionCandidate.postLayer.partitions:
 
-                    for relCxId, inputAxonGroup in \
-                            zip(relCxIds, postPartition.inputAxonGroups):
-                        cxId = cxIds[relCxId]
+                    for relCxId, cxId in zip(relCxIds, cxIds):
+                        inputAxonGroup = postPartition.inputAxonGroups[cxId]
                         outputId = relCxId
                         if self.resetMode == 'soft':
                             outputId = relCxId * neuronSize + 1
@@ -1995,7 +2067,7 @@ class NxDense(NxLayer, Dense):
                 relCxIds = np.concatenate(
                     [relCxIds,
                      [maxCxId + i for i in range(mod)]]).astype(int)
-                newCxIds = [outputSize * neuronSize \
+                newCxIds = [outputSize * neuronSize
                             + self._dummyCxSize + i for i in range(mod)]
                 cxIds = np.concatenate([cxIds,
                                         newCxIds]).astype(int)
@@ -2026,25 +2098,116 @@ class NxDense(NxLayer, Dense):
 class NxInputLayer(NxLayer, InputLayer):
     """Input layer for Loihi DNNs."""
 
-    def __init__(self, input_shape=None, batch_size=None,
-                 batch_input_shape=None, biasExp=None, vThMant=None,
-                 visualizePartitions=None, logger=None,
-                 signed=False, **kwargs):
+    def __init__(self, input_shape=None, batch_size=None, biasExp=None,
+                 vThMant=None, visualizePartitions=None, logger=None,
+                 signed=False, inputMode=None, **kwargs):
 
         NxLayer.__init__(self, biasExp=biasExp, vThMant=vThMant,
                          visualizePartitions=visualizePartitions,
                          logger=logger, **kwargs)
+
+        # Set input mode. Would like to do this using @property and .setter,
+        # but Keras for some reason doesn't allow it.
+        self.inputMode = self.setInputMode(inputMode)
 
         # Set param for signed input spikes.
         self._signed = signed
 
         kwargs = removeNxKwargs(kwargs)
 
-        InputLayer.__init__(self, input_shape, batch_size, batch_input_shape,
-                            **kwargs)
+        InputLayer.__init__(self, input_shape, batch_size, **kwargs)
+
+    def setInputMode(self, inputMode):
+        """Make changes to compartment settings depending on input mode.
+
+        If the default InputModes.BIAS is selected, no changes are made.
+
+        With InputModes.AEDAT, we need to check that the user has chosen the
+        correct compartment settings. If not, warn and override.
+
+        BIAS mode means that the input layer fires spikes at regular rates,
+        which are defined by the pixel values of the input iamge. This is the
+        default behavior.
+
+        AEDAT mode means that the user provides a list of events in form of
+        address-polarity-timestamp, which are fed into the layer as spikes. In
+        that case, we need to ensure that the threshold is as low as possible
+        and the compartment voltage and current decay as fast as possible. The
+        bias exponent is set to zero even though this should have no effect
+        (bias mantissa should not have been set anywhere).
+
+        Raises AssertionError when called before NxLayer is initialized.
+        Raises NotImplementedError if AEDAT is used together with soft reset
+        mode.
+        """
+
+        assert hasattr(self, '_resetMode'), "NxLayer must be initialized " \
+                                            "before setting input mode."
+
+        # Set default.
+        if inputMode is None:
+            inputMode = InputModes.BIAS
+
+        allowed = [i.name for i in InputModes] + [i.value for i in InputModes]
+        assert inputMode in allowed, \
+            "Input mode {} not implemented. Supported values: {}.".format(
+            inputMode, InputModes.__dict__['_member_names_'])
+
+        # Soft reset requires extra compartments, synapses, and axons for
+        # recurrent connections. These need to be taken into account when
+        # creating the synapses for the spike input.
+        if inputMode == InputModes.AEDAT and self.resetMode == 'soft':
+            raise NotImplementedError
+
+        # In case of BIAS mode, accept compartment arguments given by user
+        # without change.
+        if inputMode == InputModes.BIAS:
+            return inputMode
+
+        # For AEDAT mode, check, warn, override.
+
+        # Desired values:
+        DECAY = 4095
+        BIASEXP = 0
+        VTHMANT = 1
+
+        # Get current settings.
+        biasExp = self.compartmentKwargs['biasExp']
+        vThMant = self.compartmentKwargs['vThMant']
+        cxVoltageDecay = self.compartmentKwargs['compartmentVoltageDecay']
+        cxCurrentDecay = self.compartmentKwargs['compartmentCurrentDecay']
+
+        def check_warn_override(arg, target, label):
+            if arg != target:
+                print("WARNING: NxInputLayer argument {}={} overwritten by {} "
+                      "to meet requirement of inputMode={}.".format(
+                    label, arg, target, inputMode.name))
+                arg = target
+            return arg
+
+        biasExp = check_warn_override(biasExp, BIASEXP, 'biasExp')
+        vThMant = check_warn_override(vThMant, VTHMANT, 'vThMant')
+        cxVoltageDecay = check_warn_override(
+            cxVoltageDecay, DECAY, 'compartmentVoltageDecay')
+        cxCurrentDecay = check_warn_override(
+            cxCurrentDecay, DECAY, 'compartmentCurrentDecay')
+
+        # Apply new settings.
+        self.compartmentKwargs['biasExp'] = biasExp
+        self.compartmentKwargs['vThMant'] = vThMant
+        self.compartmentKwargs['compartmentVoltageDecay'] = cxVoltageDecay
+        self.compartmentKwargs['compartmentCurrentDecay'] = cxCurrentDecay
+
+        return inputMode
+
+    @property
+    def output_shape(self):
+        shape = super(NxInputLayer, self).output_shape
+        if shape is not None:
+            return fix_input_layer_shape(shape)
 
     def get_config(self):
-        config = {'signed': self._signed}
+        config = {'signed': self._signed, 'inputMode': self.inputMode}
         baseConfig = InputLayer.get_config(self)
         baseConfig2 = NxLayer.get_config(self)
         config.update(baseConfig)
@@ -2172,6 +2335,82 @@ class NxInputLayer(NxLayer, InputLayer):
                 limits.numOutputAxons += 1
                 return
 
+            if self.inputMode == InputModes.AEDAT:
+                # Add synapses if input is set via spikes rather than biases.
+
+                synapseEncoder = SynapseEncoder(
+                    numWeightBits=8,
+                    maxNumSynPerSynEntry=limits.maxNumSynPerSynEntry,
+                    compression='dense1',
+                    useSharedSign=False)
+
+                weights = np.array([2])
+                synEntriesOfCore = []
+                for cxId in range(numCx):
+                    synapseEncoder.encode(synIds=np.array([cxId]),
+                                          weights=weights,
+                                          cIdxOffset=0,
+                                          cIdxMult=0)
+
+                    synEntriesOfSourceGroup = [synapseEncoder.popSynEntries()]
+
+                    synEntriesOfCore.append(synEntriesOfSourceGroup)
+
+                synFmts, synEntryMap = compressSynFmts(
+                    synapseEncoder.getSynFmts(), limits.maxNumSynFmt)
+
+                if len(synFmts) > limits.maxNumSynFmt:
+                    limits.numSynFmts += 1
+                    return
+
+                synEntriesOfCore = remapSynEntries(synEntriesOfCore, synFmts,
+                                                   synEntryMap)
+
+                for synFmt in synFmts:
+                    partition.addSynFmt(synFmt)
+
+                # Synapse Groups #
+                ##################
+
+                synMemOfCore = 0
+                for i, synEntriesOfSourceGroup in enumerate(synEntriesOfCore):
+
+                    # Create new synapse group.
+                    synapseGroup = SynapseGroup(i, synEntriesOfSourceGroup)
+
+                    # The longest block of registers in synMem may not exceed
+                    # 256 words for one axon. If axon is shared, only need to
+                    # find the maximum number of words used up by any of the
+                    # neurons in the population.
+                    if (synapseGroup.maxSynMemLen >
+                            limits.maxNumSynMemWordsPerAxon):
+                        limits.synMemPerAxon += 1
+                        return
+
+                    partition.addSynapseGroup(synapseGroup)
+                    synMemOfCore += synapseGroup.numSynMemWords
+
+                if synMemOfCore >= limits.maxNumSynMemWords:
+                    limits.numSynMemWords += 1
+                    return
+
+                # Input Axons #
+                ###############
+
+                for axonId, synapseGroup in enumerate(partition.synapseGroups):
+                    inputAxonGroup = InputAxonGroup(
+                        srcNodeIds=np.array([axonId]),
+                        multiplicity=np.array([1]),
+                        synGroup=synapseGroup,
+                        cxBase=0,
+                        parentPartition=partition)
+
+                    partition.addInputAxonGroup(inputAxonGroup)
+
+                if partition.numInputAxons > limits.maxNumAxons:
+                    limits.numInputAxons += 1
+                    return
+
             # synEntries and synFmts for recurrent connections
             if self.resetMode == 'soft':
                 if not len(srcIdMap):
@@ -2189,8 +2428,8 @@ class NxInputLayer(NxLayer, InputLayer):
                 mappedCxIds = {}
                 synGrpId = 0
 
-                # Check inverseMap to ensure all compartments receive
-                # at least one inhibitory spike.
+                # Check inverseMap to ensure all compartments receive at least
+                # one inhibitory spike.
                 cxIdMap = {}
                 for _, (cxIds, relSrcIds) in inverseMap.items():
                     cxIdHash = hash(tuple(cxIds))
@@ -2238,8 +2477,8 @@ class NxInputLayer(NxLayer, InputLayer):
                 if len(synEntriesOfRecurrentGroup):
                     synEntriesOfCore.append(synEntriesOfRecurrentGroup)
 
-                synFmts, synEntryMap = compressSynFmts(synapseEncoder.getSynFmts(),
-                                                       limits.maxNumSynFmt)
+                synFmts, synEntryMap = compressSynFmts(
+                    synapseEncoder.getSynFmts(), limits.maxNumSynFmt)
 
                 if len(synFmts) > limits.maxNumSynFmt:
                     limits.numSynFmts += 1
@@ -2259,10 +2498,12 @@ class NxInputLayer(NxLayer, InputLayer):
 
                     # Create new synapse group.
                     synapseGroup = SynapseGroup(i, synEntriesOfSourceGroup)
-                    # The longest block of registers in synMem may not exceed 256 words
-                    # for one axon. If axon is shared, only need to find the maximum
-                    # number of words used up by any of the neurons in the population.
-                    if synapseGroup.maxSynMemLen > limits.maxNumSynMemWordsPerAxon:
+                    # The longest block of registers in synMem may not exceed
+                    # 256 words for one axon. If axon is shared, only need to
+                    # find the maximum number of words used up by any of the
+                    # neurons in the population.
+                    if (synapseGroup.maxSynMemLen >
+                            limits.maxNumSynMemWordsPerAxon):
                         limits.synMemPerAxon += 1
                         return
 
@@ -2306,7 +2547,7 @@ class NxInputLayer(NxLayer, InputLayer):
             #####################
             numCx = len(relToAbsDestCxIdxMap)
             if self.resetMode == 'soft':
-                tempCxIdxMap = np.zeros(numCx  * 2, int)
+                tempCxIdxMap = np.zeros(numCx * 2, int)
                 relCxIds = np.arange(numCx) * 2
                 tempCxIdxMap[relCxIds] = relToAbsDestCxIdxMap * 2
                 tempCxIdxMap[relCxIds + 1] = relToAbsDestCxIdxMap * 2 + 1
@@ -2315,18 +2556,19 @@ class NxInputLayer(NxLayer, InputLayer):
                 cxIds = np.arange(numCx)
 
                 # Add dummy neurons
-                outputSize = np.prod(outputShape[1:]).astype(int)
+                outputSize = np.prod(outputShape).astype(int)
                 mod = numCx % 4
-                cxIds = np.concatenate([cxIds,
-                                        [numCx + i for i in range(mod)]]).astype(int)
+                cxIds = np.concatenate([cxIds, [numCx + i for i
+                                                in range(mod)]]).astype(int)
 
-                relCxIds = [outputSize * 2 + self._dummyCxSize + i for i in range(mod)]
+                relCxIds = [outputSize * 2 + self._dummyCxSize + i
+                            for i in range(mod)]
                 relToAbsDestCxIdxMap = np.concatenate([relToAbsDestCxIdxMap,
                                                        relCxIds]).astype(int)
 
                 biasMant = np.zeros(numCx + mod, int)
                 biasExp = np.ones_like(biasMant) * \
-                          partitionCandidate.compartmentKwargs['biasExp']
+                    partitionCandidate.compartmentKwargs['biasExp']
                 self._dummyCxSize += mod
             else:
                 cxIds = np.arange(numCx)
@@ -2643,7 +2885,8 @@ class NxModel(Model):
 
         coreCount = 0
         for i, layer in enumerate(reversed(self.layers)):
-            layer.exclusionCriteria.maxNumCoresPerChip = self._maxNumCoresPerChip
+            layer.exclusionCriteria.maxNumCoresPerChip = \
+                self._maxNumCoresPerChip
 
             self.logger.info("Finding best partition for %s.", layer.name)
 
@@ -2711,9 +2954,8 @@ class NxModel(Model):
         if not self._isInitialized:
             self.initialize()
 
-        self.board = N2Board(
-            0,
-            numCoresPerChip=self._maxNumCoresPerChip) if board is None else board
+        self.board = N2Board(0, numCoresPerChip=self._maxNumCoresPerChip) \
+            if board is None else board
 
         hasPartitionConfig, hasMappable = self.canLoad()
 
@@ -2808,6 +3050,9 @@ class NxModel(Model):
             # This enables accessing neuron fields directly, e.g. for probes.
             compilableLayer.setBoardAndCxResourceMap(
                 self.board, mappableLayer.genCxResourceMap())
+            if 'Input' in compilableLayer.__class__.__name__:
+                compilableLayer.inputAxonResourceMap = \
+                    mappableLayer.genInputAxonResourceMap()
 
         return mapper
 

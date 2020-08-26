@@ -33,7 +33,7 @@ from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
 from nxsdk_modules_ncl.dnn.src.utils import extract
 
 
-class Test_DnnCompiler(unittest.TestCase):
+class TestDnnCompiler(unittest.TestCase):
     """Test CNN compilation."""
 
     def setUp(self):
@@ -330,9 +330,9 @@ class Test_DnnCompiler(unittest.TestCase):
             hiddenLayer.exclusionCriteria.print()
             outputLayer.exclusionCriteria.print()
 
-            for l in model.layers:
-                if isinstance(l, NxConv2D):
-                    print(l._cxResourceMap)
+            for layer in model.layers:
+                if isinstance(layer, NxConv2D):
+                    print(layer._cxResourceMap)
 
     def test_synMem(self):
         """Test issue where nxcompiler runs out of synMem.
@@ -1315,7 +1315,7 @@ def kernel_initializer(shape, dtype=None, kernelScale=1):
 
 
 def main():
-    support.run_unittest(Test_DnnCompiler)
+    support.run_unittest(TestDnnCompiler)
 
 
 if __name__ == '__main__':

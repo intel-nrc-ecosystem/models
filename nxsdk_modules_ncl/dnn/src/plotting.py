@@ -471,7 +471,7 @@ def plot_cx_syn(path, model):
     for layer in model.layers:
         sizes.append(np.prod(layer.output_shape[1:]))
         if len(layer.weights):
-            parameters.append(np.prod(layer.weights[0].shape).value)
+            parameters.append(np.prod(layer.weights[0].shape))
         else:
             parameters.append(0)
 

@@ -24,7 +24,6 @@ import subprocess
 import os
 
 import nxsdk
-from nxsdk.utils.env_var_context_manager import setEnvWithinContext
 
 
 class TestDNNTutorials(unittest.TestCase):
@@ -49,7 +48,8 @@ class TestDNNTutorials(unittest.TestCase):
         """Test all ipython tutorials in tutorials directory"""
         self.find_and_test_ipython_tutorials()
 
-    def _notebook_run(self, basedir, path):
+    @staticmethod
+    def _notebook_run(basedir, path):
         """
         Execute a notebook via nbconvert and collect output.
 
@@ -71,7 +71,8 @@ class TestDNNTutorials(unittest.TestCase):
                 [os.path.dirname(modulePath[0]), env.get("PYTHONPATH", "")])
             env["PYTHONPATH"] = ":".join(modulePath)
 
-            with tempfile.NamedTemporaryFile(mode="w+t", suffix=".ipynb") as fout:
+            with tempfile.NamedTemporaryFile(mode="w+t", suffix=".ipynb") \
+                    as fout:
                 args = [
                     "jupyter",
                     "nbconvert",
@@ -124,8 +125,8 @@ class TestDNNTutorials(unittest.TestCase):
                     errors_record[suite] = (errors_joined, nb)
 
             self.assertFalse(
-                errors_record,
-                "Failed to execute Jupyter Notebooks with errors: \n {}".format(errors_record))
+                errors_record, "Failed to execute Jupyter Notebooks with "
+                               "errors: \n {}".format(errors_record))
         finally:
             os.chdir(cwd)
 

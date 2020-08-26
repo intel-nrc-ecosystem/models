@@ -1,4 +1,4 @@
-# 
+#
 # Copyright © 2020 Intel Corporation.
 # 
 # This software and the related documents are Intel copyrighted
@@ -23,7 +23,8 @@ from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, NxAvera
 
 class TestComposableDNN(unittest.TestCase):
     """Unit test for ComposableDNN"""
-    def setUpDNN(self) -> ComposableDNN:
+    @staticmethod
+    def setUpDNN() -> ComposableDNN:
         """Sets up a DNN"""
         # Specify input shape of network.
         inputShape = (16, 16, 3)
@@ -41,7 +42,8 @@ class TestComposableDNN(unittest.TestCase):
 
         DNNModel = NxModel(inputLayer.input, x)
 
-        composableDNNModel = ComposableDNN(model=DNNModel, num_steps_per_img=100)
+        composableDNNModel = ComposableDNN(model=DNNModel,
+                                           num_steps_per_img=100)
         return composableDNNModel
 
     def testComposableDNN(self):
@@ -54,5 +56,5 @@ class TestComposableDNN(unittest.TestCase):
     def testComposableDNNWithInScopeVersion(self):
         """Tests the DNN Composable with the in-scope version"""
         with Model("dnn_pipeline") as model:
-            dnn = self.setUpDNN()
+            self.setUpDNN()
             model.compile()
