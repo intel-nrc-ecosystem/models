@@ -48,7 +48,7 @@ from nxsdk.graph.processes.embedded.embedded_snip import EmbeddedSnip
 class SpikeInputGenerator(AbstractComposable):
     def __init__(self,
             name: str,
-            packetSize: int = 1024,
+            packetSize: int = 256,
             numSnipsPerChip: int = 1,
             queueSize: int = 64):
         """
