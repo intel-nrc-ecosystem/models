@@ -2117,7 +2117,7 @@ class NxInputLayer(NxLayer, InputLayer):
 
         InputLayer.__init__(self, input_shape, batch_size, **kwargs)
 
-    def setInputMode(self, inputMode, validateSettings=True):
+    def setInputMode(self, inputMode):
         """Make changes to compartment settings depending on input mode.
 
         If the default InputModes.BIAS is selected, no changes are made.
@@ -2161,7 +2161,7 @@ class NxInputLayer(NxLayer, InputLayer):
 
         # In case of BIAS mode, accept compartment arguments given by user
         # without change.
-        if inputMode == InputModes.BIAS or not validateSettings:
+        if inputMode == InputModes.BIAS:
             return inputMode
 
         # For AEDAT mode, check, warn, override.
