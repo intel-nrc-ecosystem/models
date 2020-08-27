@@ -379,11 +379,12 @@ class SNN(AbstractSNN):
         :param keras.layers.Dense layer: Keras Dense layer.
         """
 
-        if 'softmax' in layer.activation.__name__:
-            assert self.batch_size == 1, \
-                "The current softmax implementation may lead to an "\
-                "unexplained drop in accuracy when using batch mode. It is " \
-                "recommended to use a batch_size of 1 together with softmax."
+        if 'softmax' in layer.activation.__name__ and self.batch_size > 1:
+            print("WARNING: When using batch mode (batch_size > 1), the "
+                  "current softmax implementation has in rare and yet "
+                  "unexplained cases resulted in a drop in accuracy. It is "
+                  "recommended to also try batch_size of 1 when using "
+                  "softmax.")
 
         # Skip if model has already been loaded.
         if self.snn is not None:
