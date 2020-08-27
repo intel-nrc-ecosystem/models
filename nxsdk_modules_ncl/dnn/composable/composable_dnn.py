@@ -190,7 +190,8 @@ class ComposableDNN(AbstractComposable):
 
         # Determine whether to read spikes or voltages based on activation.
         readSpikes = True
-        if output_layer.activation.__name__ == 'softmax':
+        if hasattr(output_layer, 'activation') and \
+                output_layer.activation.__name__ == 'softmax':
             offset = 0
             readSpikes = False
 
