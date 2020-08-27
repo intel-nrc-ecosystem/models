@@ -287,6 +287,8 @@ class SpikeInputGenerator(AbstractComposable):
             chip_mask = input_addresses[:, 0] == chip
             core_axon_ids = input_addresses[chip_mask, 1:]
             timesteps = inputs[chip_mask, 1]
+            assert np.min(timesteps) > 0, \
+                "Time stamps must be strictly nonzero."
             inputs_per_chip = np.column_stack([core_axon_ids, timesteps])
 
             # Sort the spikes per chip according to time, core, axons.
