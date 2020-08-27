@@ -278,7 +278,7 @@ class SpikeInputGenerator(AbstractComposable):
 
     def prepare_encoding(self, inputs):
 
-        inputs = np.array(inputs)
+        inputs = np.array(inputs, 'uint64')
 
         input_addresses = self.axonMap[inputs[:, 0]]
         inputs_encoded = OrderedDict()
