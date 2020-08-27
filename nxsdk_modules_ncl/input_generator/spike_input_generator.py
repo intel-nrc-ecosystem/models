@@ -325,7 +325,11 @@ class SpikeInputGenerator(AbstractComposable):
         channel_idx = 0
         for inputs_per_chip in inputs.values():
             for inputs_per_cpu in inputs_per_chip.values():
-                num_packets = math.ceil(len(inputs_per_cpu) / self.packetSize)
+                # Must have one (at least partly) empty package at the end,
+                # otherwise the snip will try to read out where nothing is
+                # written. (Cant' use ceil because it doesn't cover the case of
+                # even division.)
+                num_packets = len(inputs_per_cpu) // self.packetSize + 1
                 self._dataChannels[channel_idx].write(num_packets,
                                                       inputs_per_cpu)
                 channel_idx += 1
