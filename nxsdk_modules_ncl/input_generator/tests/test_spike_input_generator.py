@@ -101,11 +101,7 @@ class TestSpikeInputGenerator(unittest.TestCase):
         m.start(board=m.board, partition=os.environ.get("PARTITION"))
 
         # Encode the data
-        input_list = []
         num_timesteps = 200
-        # for i in range(num_timesteps):
-        #     input_list.append((random.randint(0, num_axons - 1),
-        #                        random.randint(1, num_timesteps)))
         input_list = [(0, t) for t in range(1, num_timesteps)]
         ie.encode(input_list)
 
@@ -115,4 +111,4 @@ class TestSpikeInputGenerator(unittest.TestCase):
         plt.show()
 
         m.disconnect()
-        self.assertEqual(True, True)
+        self.assertGreater(np.max(vProbes.data), 0)
