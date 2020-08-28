@@ -48,7 +48,7 @@ from nxsdk.graph.processes.embedded.embedded_snip import EmbeddedSnip
 class SpikeInputGenerator(AbstractComposable):
     def __init__(self,
             name: str,
-            packetSize: int = 1024,
+            packetSize: int = 256,
             numSnipsPerChip: int = 1,
             queueSize: int = 64):
         """
@@ -278,7 +278,7 @@ class SpikeInputGenerator(AbstractComposable):
 
     def prepare_encoding(self, inputs):
 
-        inputs = np.array(inputs)
+        inputs = np.array(inputs, 'uint64')
 
         input_addresses = self.axonMap[inputs[:, 0]]
         inputs_encoded = OrderedDict()
@@ -287,6 +287,8 @@ class SpikeInputGenerator(AbstractComposable):
             chip_mask = input_addresses[:, 0] == chip
             core_axon_ids = input_addresses[chip_mask, 1:]
             timesteps = inputs[chip_mask, 1]
+            assert np.min(timesteps) > 0, \
+                "Time stamps must be strictly nonzero."
             inputs_per_chip = np.column_stack([core_axon_ids, timesteps])
 
             # Sort the spikes per chip according to time, core, axons.
@@ -323,7 +325,11 @@ class SpikeInputGenerator(AbstractComposable):
         channel_idx = 0
         for inputs_per_chip in inputs.values():
             for inputs_per_cpu in inputs_per_chip.values():
-                num_packets = math.ceil(len(inputs_per_cpu) / self.packetSize)
+                # Must have one (at least partly) empty package at the end,
+                # otherwise the snip will try to read out where nothing is
+                # written. (Cant' use ceil because it doesn't cover the case of
+                # even division.)
+                num_packets = len(inputs_per_cpu) // self.packetSize + 1
                 self._dataChannels[channel_idx].write(num_packets,
                                                       inputs_per_cpu)
                 channel_idx += 1
