@@ -1,0 +1,3 @@
+[submodule "nxsdk_modules_contrib/loihi_rl"]
+	path = nxsdk_modules_contrib/loihi_rl
+	url = https://github.com/wilkieolin/loihi_rl
