@@ -97,11 +97,6 @@ Constains some basic stuff, mainly about the logging system.
 
 The utils module is a singleton. It is independent from the experiments and can be called anywhere, also e.g. in evaluation scripts where only stored data is processed.
 
-## Acknowledgement
-
-* Pelenet : Carlo Michaelis, University of Goettingen (https://github.com/sagacitysite/pelenet)
-* Connection matrix and Connection asymmetry landscape Python packages in ``lib/anisotropic`` were contributed by Sebastian Spreizer (https://github.com/babsey/spatio-temporal-activity-sequence/tree/6d4ab597c98c01a2a9aa037834a0115faee62587)
-
 ## Questions
 
 If you have any questions, please just contact me via carlo.michaelis @ gmail.com

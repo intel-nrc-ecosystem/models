@@ -12,4 +12,6 @@ For community support, Q&A and other information, please visit: http://neuromorp
 
 ## Acknowledgments
 
-* Pelenet - Carlo Michaelis
+* Pelenet : Carlo Michaelis, University of Goettingen (https://github.com/sagacitysite/pelenet)
+  * Connection matrix and Connection asymmetry landscape Python packages in ``lib/anisotropic`` were contributed by Sebastian Spreizer (https://github.com/babsey/spatio-temporal-activity-sequence/tree/6d4ab597c98c01a2a9aa037834a0115faee62587)
+
