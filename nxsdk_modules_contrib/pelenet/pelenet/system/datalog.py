@@ -1,4 +1,5 @@
 from datetime import datetime
+from re import match
 import logging
 import os
 
@@ -14,11 +15,12 @@ class Datalog():
     """
     @desc: Initialize system class with system parameters and function calls
     """
-    def __init__(self, parameters):
+    def __init__(self, parameters, name=''):
         # Define important system values
         self.p = parameters
         time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.dir = self.p.dataLogPath + time + '/'
+        dirname = '' if name == '' else '_'+self.filenameSave(name) 
+        self.dir = self.p.dataLogPath + time + dirname + '/'
 
         # Initialize datalog
         self.initDataLog()
@@ -31,6 +33,13 @@ class Datalog():
 
         # Log successful configuration of the system
         logging.info('System initialized')
+
+    """
+    @desc: Convert arbitrary string to filename save string
+    """
+    def filenameSave(self, str):
+        # Only allow letters ("a-z" & "A-Z"), numbers "0-9" and "-", "_"
+        return "".join([c for c in str if match(r'[a-zA-Z0-9-_]', c)])
 
     """
     @desc: Init datalog

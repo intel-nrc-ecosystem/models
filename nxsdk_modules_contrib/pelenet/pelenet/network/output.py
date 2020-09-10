@@ -6,18 +6,16 @@ from scipy import sparse
 """
 def drawOutputMaskAndWeights(self):
 
-    # TODO
-    # * Test speed with output neuron probes
-
     # Define some helper variables
     cs = self.p.partitioningClusterSize  # Size of output clusters
+    exEdge = int(np.sqrt(self.p.reservoirExSize))
 
     # Define empty mask
     mask = np.zeros((self.p.reservoirExSize, self.p.numOutputNeurons)).astype(int)
     #mask = np.zeros((self.p.reservoirExSize, self.p.numOutClusters)).astype(int)
 
     # Get indices of network topology
-    topologyIndices = np.arange(self.p.reservoirExSize).reshape((self.p.topologySize, self.p.topologySize))
+    topologyIndices = np.arange(self.p.reservoirExSize).reshape((exEdge, exEdge))
 
     # Get indices of shifted network topology
     topologyIndicesRolled = np.roll(topologyIndices, int(cs/2), axis=(0,1))

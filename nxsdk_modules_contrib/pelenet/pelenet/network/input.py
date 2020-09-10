@@ -1,12 +1,13 @@
 import numpy as np
 import logging
 import itertools
+import warnings
+from scipy import sparse
 
 """
-TODO: Shift to utils/misc.py
 @desc: Generates a sinus signal (one 'hill') in given length of time steps
 """
-def generateSinSignal(length, start=0):
+def generateSinusInput(length):
     # Draw from a sin wave from 0 to 3,14 (one 'hill')
     probCoeff = 1 #1.5  # the higher the probability coefficient, the more activity is in the network
     probs = probCoeff * np.abs(np.sin((np.pi / length) * np.arange(length)))
@@ -14,284 +15,213 @@ def generateSinSignal(length, start=0):
 
     # Get indices of spike
     spikeInd = np.where(randoms < probs)[0]
-    # Shift sin signal by 'start' and return spikes
-    return (spikeInd + start)
+
+    # Return spikes
+    return spikeInd
 
 """
-TODO: Shift to utils/misc.py
 @desc: Generates a simple input signal
-        Respects tEpoch of STDP learning rule
 """
-def generateInputSignal(length, prob=0.1, start=0):
+def generateUniformInput(length, prob=0.1):
     spikes = np.zeros((length, 1))
-    refCtr = 0  # initialize refractory value
     randoms = np.random.rand(length)
 
+    # Draw spikes
     for i in range(length):
-        spikes[i] = (randoms[i] < prob) and refCtr <= 0
-        # After spike, set refractory value
-        #if spikes[i]:
-        #    refCtr = self.p.learningEpoch + 1
-        # Reduce refractory value by one
-        #refCtr -= 1
-
+        spikes[i] = (randoms[i] < prob)
+    
     # Get indices of spike
     spikeTimes = np.where(spikes)[0]
-    # Shift sin signal by 'start' and return spikes
-    return (spikeTimes + start)
 
-# """
-# @desc: Create input spiking generator to add a cue signal,
-#         the input is connected to the reservoir network,
-#         an excitatory connection prototype is used
-# """
-# def addCueGenerator(self, inputSpikes = None):
-#     # Create spike generator
-#     sg = self.nxNet.createSpikeGenProcess(numPorts=self.p.cueGens)
-
-#     cueSpikes = []
-#     for i in range(self.p.cueGens):
-#         # Generate spikes and add them to spike generator
-#         cueSpikesInd = None
-#         # If input spikes are not given
-#         if inputSpikes is None:
-#             cueSpikesInd = generateInputSignal(self.p.cueSteps, prob=self.p.cueSpikeProb) #generateSinSignal(self.p.cueSteps)
-#             # Store cue input in object
-#             cueSpikes.append(cueSpikesInd)
-#         # If input spikes are given
-#         else:
-#             cueSpikesInd = inputSpikes[i]
-        
-#         sg.addSpikes(spikeInputPortNodeIds=i, spikeTimes=cueSpikesInd.tolist())
-
-#     if len(self.cueSpikes) == 0:
-#         self.cueSpikes = np.array(cueSpikes)  # If train, store generated spikes
-
-#     # Define mask
-#     cueMask = self.drawSparseMaskMatrix(self.p.cueDens, self.p.reservoirExSize, self.p.cueGens)
-
-#     cueSize = int(np.sqrt(self.p.cuePatchNeurons))
-#     exNeuronsTopSize = int(np.sqrt(self.p.reservoirExSize))
-
-#     #cueMask = np.zeros((cueSize, cueSize))
-#     #cueMask[self.p.cueSize:, :] = 0  # set all mas values behind last neuron of cue input to zero
-
-#     # Set all values zero which are not part of the patch
-#     topology = np.ones((exNeuronsTopSize,exNeuronsTopSize))
-#     shift = self.p.cuePatchNeuronsShift
-#     topology[shift:shift+cueSize,shift:shift+cueSize] = 0
-#     #topology[0,0] = 1
-#     idc = np.where(topology.flatten())[0]
-#     cueMask[idc,:] = 0
-
-#     # Define weights
-#     cueWeights = self.p.cueMaxWeight*np.random.rand(self.p.reservoirExSize, self.p.cueGens)
-
-#     # Connect generator to the reservoir network
-#     for i in range(len(self.exReservoirChunks)):
-#         fr, to = i*self.p.neuronsPerCore, (i+1)*self.p.neuronsPerCore
-#         ma = cueMask[fr:to, :]
-#         we = cueWeights[fr:to, :]
-#         sg.connect(self.exReservoirChunks[i], prototype=self.exConnProto, connectionMask=ma, weight=we)
-    
-#     self.cueWeights = self.getMaskedWeights(cueWeights, cueMask)
-
-#     # Log that cue generator was added
-#     logging.info('Cue generator was added to the network')
-
-# """
-# @desc: Create input spiking generator to add a cue signal,
-#         the input is connected to the reservoir network,
-#         an excitatory connection prototype is used
-# """
-# def addRepeatedCueGenerator(self):
-#     # Create spike generator
-#     sg = self.nxNet.createSpikeGenProcess(numPorts=self.p.cueGens)
-
-#     for i in range(self.p.cueGens):
-#         # Generate spikes for spike current generator
-#         spikes = (np.random.rand(self.p.cueSteps) < self.p.cueSpikeProb)
-#         # Get indices from spikes
-#         cueSpikesInd = []
-#         for j in range(self.p.trials):
-#             # Draw neurons to flip with probability flipProb
-#             flips = (np.random.rand(self.p.cueSteps) < self.p.flipProb)
-#             # Apply flips to cue input
-#             noisedSpikes = np.logical_xor(spikes, flips)
-#             # Transform to event indices
-#             noisedIndices = np.where(noisedSpikes)[0] + self.p.trialSteps*j + self.p.resetOffset*(j+1)
-#             cueSpikesInd.append(noisedIndices)
-
-#         self.cueSpikes.append(list(itertools.chain(*cueSpikesInd)))
-            
-#         # Add spikes indices to current spike generator
-#         sg.addSpikes(spikeInputPortNodeIds=i, spikeTimes=list(itertools.chain(*cueSpikesInd)))
-
-#     # Define mask
-#     cueMask = self.drawSparseMaskMatrix(self.p.cueDens, self.p.reservoirExSize, self.p.cueGens)
-
-#     cueSize = int(np.sqrt(self.p.cuePatchNeurons))
-#     exNeuronsTopSize = int(np.sqrt(self.p.reservoirExSize))
-
-#     #cueMask = np.zeros((cueSize, cueSize))
-#     #cueMask[self.p.cueSize:, :] = 0  # set all mas values behind last neuron of cue input to zero
-
-#     # Set all values zero which are not part of the patch
-#     shift = self.p.cuePatchNeuronsShift
-#     topology = np.ones((exNeuronsTopSize,exNeuronsTopSize))
-#     topology[shift:shift+cueSize,shift:shift+cueSize] = 0
-#     #topology[0,0] = 1
-#     idc = np.where(topology.flatten())[0]
-#     cueMask[idc,:] = 0
-
-#     # Define weights
-#     cueWeights = self.p.patchMaxWeight*np.random.rand(self.p.reservoirExSize, self.p.cueGens)
-
-#     # Connect generator to the reservoir network
-#     for i in range(len(self.exReservoirChunks)):
-#         fr, to = i*self.p.neuronsPerCore, (i+1)*self.p.neuronsPerCore
-#         ma = cueMask[fr:to, :]
-#         we = cueWeights[fr:to, :]
-#         sg.connect(self.exReservoirChunks[i], prototype=self.exConnProto, connectionMask=ma, weight=we)
-    
-#     self.cueWeights = self.getMaskedWeights(cueWeights, cueMask)
-
-#     # Log that cue generator was added
-#     logging.info('Cue generator was added to the network')
+    # Return spikes
+    return spikeTimes
+"""
+@desc:  Adds an input to the network for every trial,
+        either a sequence or a single input
+"""
+def addInput(self, *args, **kwargs):
+    if self.p.inputIsSequence:
+        addInputSequence(self, *args, **kwargs)
+    else:
+        addInputSingle(self, *args, **kwargs)
 
 """
-@desc: Create input spiking generator to add a patch signal,
-        the input is connected to the reservoir network,
-        an excitatory connection prototype is used
+@desc:  Create a sequence of inputs
+NOTE a topology is currently not supported in a sequence input
 """
-def addRepeatedPatchGenerator(self, idc=None):
-    patchGens = int(self.p.patchGensPerNeuron*self.p.patchNeurons)
+def addInputSequence(self):
+    if self.p.inputIsTopology:
+        warnings.warn("inputIsTopology is currently not supported for an input sequence and will be ignored")
+
+    # Get number of generators
+    numGens = self.p.inputNumTargetNeurons
+
+    # Iterate over number of inputs
+    for i in range(self.p.inputSequenceSize):
+        # Create spike generator
+        sg = self.nxNet.createSpikeGenProcess(numPorts=numGens)
+
+        # Draw spikes for input generators for current input
+        inputSpikes = drawSpikesForAllGenerators(self, numGens, offset=i*self.p.inputSteps)
+        self.inputSpikes.append(inputSpikes)
+
+        # Add spikes s to generator i
+        for k, s in enumerate(inputSpikes):
+            if type(s) is not list: s = s.tolist()
+            sg.addSpikes(spikeInputPortNodeIds=k, spikeTimes=s)
+
+        # Get inidices of target neurons for current input
+        inputTargetNeurons = np.arange(i*self.p.inputNumTargetNeurons, (i+1)*self.p.inputNumTargetNeurons)
+        self.inputTargetNeurons.append(inputTargetNeurons)
+
+        # Connect spike generators to reservoir
+        self.inputWeights = connectSpikeGenerator(self, sg, inputTargetNeurons)
+
+    # Log that input was added
+    logging.info('Input sequence was added to the network')
+
+"""
+@desc:  Connects a single input per trial to the reservoir network
+@note:  If inputIsTopology is true the number of target neurons may differ
+        due to rounding in getTargetNeurons() function
+        therefore self.p.inputNumTargetNeurons cannot be used here,
+        but instead len(self.inputTargetNeurons) must be used
+@params:
+        inputSpikeIndices:      indices of input spikes for spike generators
+                                if not given, they are drawn (default)
+        targetNeuronIndices:    indices of reservoir neurons to connect input to
+                                if not given, indices are taken successively (default)
+"""
+def addInputSingle(self, inputSpikeIndices=[], targetNeuronIndices=[]):
+    # Get inidices of target neurons if not already given
+    self.inputTargetNeurons = targetNeuronIndices if len(targetNeuronIndices) else getTargetNeurons(self)
+
+    # Get number of generators
+    numGens = len(self.inputTargetNeurons)
 
     # Create spike generator
-    sg = self.nxNet.createSpikeGenProcess(numPorts=patchGens)
+    sg = self.nxNet.createSpikeGenProcess(numPorts=numGens)
 
-    combinations = np.array(list(itertools.combinations(np.arange(self.p.patchNeurons), self.p.patchMissingNeurons)))
+    # Draw spikes for input generators if not already given
+    self.inputSpikes = inputSpikeIndices if len(inputSpikeIndices) else drawSpikesForAllGenerators(self, numGens=numGens)
 
-    # Initialize counter
-    cnt = 0
-    # Iterate over patch neurons
-    for i in range(self.p.patchNeurons):
-        
+    # Add spikes s to generator i
+    for i, s in enumerate(self.inputSpikes):
+        if type(s) is not list: s = s.tolist()
+        sg.addSpikes(spikeInputPortNodeIds=i, spikeTimes=s)
+
+    # Connect spike generators to reservoir
+    self.inputWeights = connectSpikeGenerator(self, sg, self.inputTargetNeurons)
+
+    # Log that input was added
+    logging.info('Input was added to the network')
+
+"""
+@desc: Draw spikes for ALL spike generators
+"""
+def drawSpikesForAllGenerators(self, numGens, offset=0):
+    # Initialize array for spike indices
+    inputSpikes = []
+
+    # Define empty variable for combinations
+    combinations = None
+    # If leave out should be applied, define all possible combinations to leave one out
+    if self.p.inputIsLeaveOut:
+        combinations = np.array(list(itertools.combinations(np.arange(len(self.inputTargetNeurons)), self.p.inputNumLeaveOut)))
+
+    # Iterate over target neurons to draw spikes
+    for i in range(numGens):
+        # Initialize array for spike indices for generator i
         spikeTimes = []
-        # Iterate over trials
-        for k in range(self.p.trials):
-            # Add spike times only when i != k
-            apply = np.all([combinations[k, m] != i for m in range(self.p.patchMissingNeurons)])
-            # If patch neuron indices are given, add spikes to all patch neurons
-            if idc is not None:
-                apply = True
 
-            if (apply):
-                spks = np.arange(self.p.inputSteps) + self.p.trialSteps*k + self.p.resetOffset*(k+1)
+        # Defines spikes for generator i for all trials
+        for k in range(self.p.trials):
+            apply = True
+
+            # If leave out should be applied, update apply boolean
+            if self.p.inputIsLeaveOut:
+                # Add spike times only when i != k
+                apply = np.all([combinations[k, m] != i for m in range(self.p.inputNumLeaveOut)])
+
+            # If spike generator produces input for the current trial, add it to spikeTimes
+            if apply:
+                off = offset + self.p.stepsPerTrial*k + self.p.resetOffset*(k+1)
+                spks = drawSpikes(self, offset=off)
                 spikeTimes.append(spks)
 
-        spikeTimes = list(itertools.chain(*spikeTimes))
-            
-        # Iterate over generators
-        for j in range(self.p.patchGensPerNeuron):
-            # Add spikes indices to current spike generator
-            sg.addSpikes(spikeInputPortNodeIds=cnt, spikeTimes=spikeTimes)
-            # Increase counter
-            cnt += 1
+        # Add spike indices to inputSpikes array
+        inputSpikes.append(list(itertools.chain(*spikeTimes)))
 
-        # Add spike indices to patchSpikes array
-        self.patchSpikes.append(spikeTimes)
+    return inputSpikes
 
-    if idc is None:
-        patchSize = int(np.sqrt(self.p.patchNeurons))
-        exNeuronsTopSize = int(np.sqrt(self.p.reservoirExSize))
+"""
+@desc: Draw spikes for ONE spike generator
+"""
+def drawSpikes(self, offset=0):
+    s = []
+    # Generate spikes, depending on input type
+    if self.p.inputType == 'uniform':
+        s = self.p.inputOffset + offset + generateUniformInput(self.p.inputSteps, prob=self.p.inputGenSpikeProb)
+    if self.p.inputType == 'sinus':
+        s = self.p.inputOffset + offset + generateSinusInput(self.p.inputSteps)
 
-        #patchMask = np.zeros((patchSize, patchSize))
-        #patchMask[self.p.patchSize:, :] = 0  # set all mas values behind last neuron of patch input to zero
+    return s
 
-        # Set all values zero which are not part of the patch
-        shiftX = self.p.patchNeuronsShiftX
-        shiftY = self.p.patchNeuronsShiftY
-        #shiftX = 44
-        #shiftY = 24
-        topology = np.zeros((exNeuronsTopSize,exNeuronsTopSize))
-        topology[shiftY:shiftY+patchSize,shiftX:shiftX+patchSize] = 1
-        #topology[0,0] = 1
-        idc = np.where(topology.flatten())[0]
+"""
+@desc: Define target neurons in reservoir to connect generators with
+"""
+def getTargetNeurons(self):
+    # Initialize array for target neurons
+    targetNeurons = []
 
-        # In every trial remove another 
-        #self.idc = idc
+    # If topology should NOT be considered, just take first n neurons as target
+    if not self.p.inputIsTopology:
+        targetNeurons = np.arange(self.p.inputNumTargetNeurons)
+
+    # If topology should be considered, define square input target area
+    if self.p.inputIsTopology:
+        # Define size and 
+        targetNeuronsEdge = int(np.sqrt(self.p.inputNumTargetNeurons))
+        exNeuronsEdge = int(np.sqrt(self.p.reservoirExSize))
+
+        # Get shifts for the input area of the target neurons
+        sX = self.p.inputShiftX
+        sY = self.p.inputShiftY
+
+        # Define input region in network topology and store their indices
+        topology = np.zeros((exNeuronsEdge,exNeuronsEdge))
+        topology[sY:sY+targetNeuronsEdge,sX:sX+targetNeuronsEdge] = 1
+        targetNeurons = np.where(topology.flatten())[0]
+
+    return targetNeurons
     
-    # Store patch neurons
-    self.patchNeurons = idc
+"""
+@desc:  Connect spike generators with target neurons of reservoir
+        Every spike generator is connected to one neuron
+        Finally draws uniformly distributed weights
+@params:
+        spikeGenerators: nxsdk spike generators
+        inputTargetNeurons: indices of reservoir target neurons
+"""
+def connectSpikeGenerator(self, spikeGenerators, inputTargetNeurons):
+    # Creates empty mask matrix
+    inputMask = np.zeros((self.p.reservoirExSize, len(inputTargetNeurons)))
 
-    # Define mask for connections
-    patchMask = np.zeros((self.p.reservoirExSize, patchGens))
-    for i, idx in enumerate(idc):
-        fr, to = i*self.p.patchGensPerNeuron, (i+1)*self.p.patchGensPerNeuron
-        patchMask[idx,fr:to] = 1
+    # Every generator is connected to one 
+    for i, idx in enumerate(inputTargetNeurons):
+        inputMask[idx,i:i+1] = 1
 
-    # Define weights
-    self.patchWeights = patchMask*self.p.patchMaxWeight
+    # Transform to sparse matrix
+    inputMask = sparse.csr_matrix(inputMask)
+
+    # Draw weights
+    inputWeights = self.drawSparseWeightMatrix(inputMask, distribution='uniform')
 
     # Connect generator to the reservoir network
     for i in range(len(self.exReservoirChunks)):
         fr, to = i*self.p.neuronsPerCore, (i+1)*self.p.neuronsPerCore
-        ma = patchMask[fr:to, :]
-        we = self.patchWeights[fr:to, :]
-        sg.connect(self.exReservoirChunks[i], prototype=self.exConnProto, connectionMask=ma, weight=we)
+        ma = inputMask[fr:to, :].toarray()
+        we = inputWeights[fr:to, :].toarray()
+        spikeGenerators.connect(self.exReservoirChunks[i], prototype=self.genConnProto, connectionMask=ma, weight=we)
 
-    # Log that patch generator was added
-    logging.info('Cue generator was added to the network')
-
-"""
-@desc: Create input spiking generator to add a trace signal,
-        the input is connected to a share of the reservoir network,
-        an excitatory connection prototype is used
-"""
-def addTraceGenerator(self, clusterIdx):
-    start = self.p.inputOffset + clusterIdx*self.p.traceSteps
-    # Create spike generator
-    sg = self.nxNet.createSpikeGenProcess(numPorts=self.p.traceGens)
-
-    traceSpikes = []
-    for i in range(self.p.traceGens):
-        # Generate spikes for one training step
-        #traceSpikesInd = generateSinSignal(self.p.traceSteps, start)
-        traceSpikesInd = generateInputSignal(self.p.traceSteps, prob=self.p.traceSpikeProb, start=start)
-
-        # Multiply spikes to all training steps
-        spikeRange = range(0, self.p.totalSteps, self.p.totalTrialSteps)
-        traceSpikesInds = np.ndarray.flatten(np.array([traceSpikesInd + i for i in spikeRange]))
-        
-        # Add all spikes to spike generator
-        sg.addSpikes(spikeInputPortNodeIds=i, spikeTimes=traceSpikesInds.tolist())
-
-        # Store trace input in object
-        traceSpikes.append(traceSpikesInds)
-    
-    self.traceSpikes.append(np.array(traceSpikes))
-
-    # Connect generator to the reservoir network
-    startNeuron = clusterIdx*self.p.traceClusterSize + self.p.constSize
-    endNeuron = startNeuron+(self.p.traceClusterSize-1)
-
-    #traceMask = np.zeros((self.p.reservoirExSize, self.p.traceGens)).astype(int)
-    #traceMask[startNeuron:endNeuron, :] = 1
-    #traceMask = sparse.csr_matrix(traceMask)
-    traceMask = self.drawSparseMaskMatrix(self.p.traceDens, self.p.reservoirExSize, self.p.traceGens)
-    traceMask[endNeuron:, :] = 0  # set all mas values behind last neuron of cluster to zero
-
-    #traceWeights = self.p.traceMaxWeight*np.random.rand(self.p.reservoirExSize, self.p.traceGens)
-    traceWeights = self.drawSparseWeightMatrix(traceMask)
-
-    # Connect generator to the excitatory reservoir network
-    for i in range(len(self.exReservoirChunks)):
-        fr, to = i*self.p.neuronsPerCore, (i+1)*self.p.neuronsPerCore
-        ma = traceMask[fr:to, :].toarray()
-        we = traceWeights[fr:to, :].toarray()
-        sg.connect(self.exReservoirChunks[i], prototype=self.exConnProto, connectionMask=ma, weight=we)
-
-    self.traceMasks.append(traceMask)
-    #self.traceWeights.append(self.getMaskedWeights(traceWeights, traceMask))
-    self.traceWeights.append(traceWeights)
+    return inputWeights

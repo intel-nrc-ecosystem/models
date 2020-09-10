@@ -22,47 +22,54 @@ class SequenceExperiment():
     """
     @desc: Initiates the experiment
     """
-    def __init__(self):
+    def __init__(self, name='', parameters={}):
         # Parameters
-        self.p = Parameters(update = self.updateParameters())
+        self.p = Parameters(update = self.updateParameters(parameters))
 
         self.net = None
 
         # Instantiate system singleton and add datalog object
         self.system = System.instance()
-        datalog = Datalog(self.p)
+        datalog = Datalog(self.p, name=name)
         self.system.setDatalog(datalog)
 
         # Instantiate utils and plot
-        self.utils = Utils.instance()
+        self.utils = Utils.instance(parameters=self.p)
         self.plot = Plot(self)
-
-        # Define some further variables
-        self.targetFunctions = np.zeros((self.p.traceClusters, self.p.traceSteps))
-        self.estimatedParameters = None
-        self.parameterMean = None
-        self.trainInNet = None
-        self.testInNet = None
-        self.testSpikes = None
-        self.trainSpikes = None
 
     """
     @desc: Overwrite parameters for this experiment
     """
-    def updateParameters(self):
-        return {
+    def updateParameters(self, jupP={}):
+        expP = {
             # Experiment
-            'trials': 5,
-            'stepsPerTrial': 90,
+            'seed': 1,  # Random seed
+            'trials': 10,  # Number of trials
+            'stepsPerTrial': 60,  # Number of simulation steps for every trial
+            # Neurons
+            'refractoryDelay': 2, # Refactory period
+            'voltageTau': 100,  # Voltage time constant
+            'currentTau': 5,  # Current time constant
+            'thresholdMant': 1200,  # Spiking threshold for membrane potential
             # Network
-            'reservoirExSize': 2048,
-            'reservoirConnProb': None,
-            'reservoirConnPerNeuron': 45,
-            'isLearningRule': True,
-            'learningRule': '2^-2*x1*y0 - 2^-2*y1*x0 + 2^-4*x1*y1*y0 - 2^-3*y0*w*w',
+            'reservoirExSize': 400,  # Number of excitatory neurons
+            'reservoirConnPerNeuron': 35,  # Number of connections per neuron
+            'isLearningRule': True,  # Apply a learning rule
+            'learningRule': '2^-2*x1*y0 - 2^-2*y1*x0 + 2^-4*x1*y1*y0 - 2^-3*y0*w*w',  # Defines the learning rule
+            # Input
+            'inputIsSequence': True,  # Activates sequence input
+            'inputSequenceSize': 3,  # Number of input clusters in sequence
+            'inputSteps': 20,  # Number of steps the trace input should drive the network
+            'inputGenSpikeProb': 0.8,  # Probability of spike for the generator
+            'inputNumTargetNeurons': 40,  # Number of neurons activated by the input
             # Probes
-            'isExSpikeProbe': True
+            'isExSpikeProbe': True,  # Probe excitatory spikes
+            'isInSpikeProbe': True,  # Probe inhibitory spikes
+            'isWeightProbe': True  # Probe weight matrix at the end of the simulation
         }
+
+        # Parameters from jupyter notebook overwrite parameters from experiment definition
+        return { **expP, **jupP}
 
     """
     @desc: Build reservoir network with all parts (input, output, noise, etc.)
@@ -78,115 +85,30 @@ class SequenceExperiment():
         self.net.connectReservoir()
 
         # Add cue
-        self.net.addTraceGenerator(0)
-        self.net.addTraceGenerator(1)
-        self.net.addTraceGenerator(2)
+        self.net.addInput()
 
         # Add background noise
         #self.net.addNoiseGenerator()
 
-        # Build the network structure
-        self.net.build()
+        # Add Probes
+        self.net.addProbes()
+
+    """
+    @desc: Run experiment
+    """
+    def run(self):
+        # Run network
+        self.net.run()
 
     """
     @desc: Draw mask and weights
     """
     def drawMaskAndWeights(self):
         # Draw and store mask matrix
-        mask = self.net.drawAndSetSparseReservoirMaskMatrix(self.p.reservoirConnProb, self.p.reservoirSize, self.p.reservoirSize, avoidSelf=True)
+        mask = self.net.drawAndSetSparseReservoirMaskMatrix()
 
         # Draw and store weight matrix
         self.net.drawAndSetSparseReservoirWeightMatrix(mask)
-
-    """
-    @desc: Train sequence
-    """
-    def trainSequence(self):
-        # Instanciate innate network
-        self.trainInNet = TrainNet(parameters=self.p)
-
-        # Build the network structure
-        self.trainInNet.build()
-
-        # Print and plot statistics about network structure
-        self.trainInNet.plot.weightDistribution()  # plot histogram of weights and calc spectral radius
-
-        # Plot weight matrix
-        self.trainInNet.plot.excitatoryWeightMatrix()
-        
-        # Run network
-        self.trainInNet.run()
-
-        # Calculate spikes from probes activities
-        self.trainInNet.exSpikeTrains = self.utils.getSpikesFromActivity(self.trainInNet.exActivityTrains)
-        self.trainInNet.inSpikeTrains = self.utils.getSpikesFromActivity(self.trainInNet.inActivityTrains)
-    
-    """
-    @desc: Test sequence
-    """
-    def testSequence(self):
-        # Instantiate parameters and turn off learning rule
-        testParameters = Parameters()
-        setattr(testParameters, 'learningRuleStatus', False)  # deactivate learning rule
-
-        # Instanciate innate network
-        self.testInNet = TestNet(parameters=testParameters)
-
-        # Copy weights and masks from training net initialization
-        self.testInNet.initialMasks = deepcopy(self.trainInNet.initialMasks)
-        self.testInNet.initialWeights = deepcopy(self.trainInNet.initialWeights)
-
-        # Copy cue spikes
-        self.testInNet.cueSpikes = deepcopy(self.trainInNet.cueSpikes)
-
-        # Replace initial excitatory weight matrix with trained matrix
-        exex = self.trainInNet.getWeightMatrixFromProbe()
-        insize = self.p.traceClusters*self.p.traceClusterSize
-        #exex[insize:, 0:insize] = (0.5*exex[insize:, 0:insize]).astype(int)
-        #exex[0:insize, insize:] = (0.5*exex[0:insize, insize:]).astype(int)
-        #exex[insize:, insize:] = (0.5*exex[insize:, insize:]).astype(int)
-        #exex[0:insize, 0:insize] = 7*exex[0:insize, 0:insize]
-        self.testInNet.initialWeights.exex = exex
-        # TODO: 'zoom in' in spike train, what happens?
-
-        # Build the network structure and use initial matrices
-        self.testInNet.build(reservoirMasks=self.testInNet.initialMasks, reservoirWeights=self.testInNet.initialWeights)
-
-        # Plot weight matrix
-        self.testInNet.plot.excitatoryWeightMatrix()
-
-        # Run the network
-        self.testInNet.run()
-
-    """
-    @desc: Define function to learn as ouput
-    @params:
-            clusterIndex: index of cluster the function is defined for
-            type: 'sin', 'revsin', 'lin'
-    """
-    def setTargetFunction(self, clusterIndex, type):
-        nTs = self.p.traceSteps
-
-        # Define function values
-        if type == 'sin': self.targetFunctions[clusterIndex,:] = 0.5+0.5*np.sin((np.pi/(0.5*nTs))*np.arange(nTs))
-        elif type == 'revsin': self.targetFunctions[clusterIndex,:] = 0.5-0.5*np.sin((np.pi/(0.5*nTs))*np.arange(nTs))
-        elif type == 'lin': self.targetFunctions[clusterIndex,:] = np.concatenate((0.5-(1/nTs)*np.arange(nTs/2), (1/nTs)*np.arange(nTs/2)))
-        else: raise ValueError('Chosen function type is not available')
-    
-    """
-    TODO: Shift to plots/misc.py
-    @desc: Plots either target function or estimated function
-    """
-    def plotActionSequenceFunction(self, y, title="Target function"):
-        # Plot function
-        plt.figure(figsize=(16, 4))
-        plt.title(title)
-        plt.xlabel('Time')
-        for i in range(self.p.traceClusters):
-            fr, to = i*self.p.traceSteps, (i+1)*self.p.traceSteps
-            plt.plot(np.arange(fr, to), y[i], label="Cluster"+str(i))
-        plt.legend()
-        p = plt.show()
 
     """
     @desc: Call several function in order to evaluate results

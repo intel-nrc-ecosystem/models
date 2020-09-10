@@ -12,3 +12,4 @@ For community support, Q&A and other information, please visit: http://neuromorp
 
 ## Acknowledgments
 
+* Pelenet - Carlo Michaelis

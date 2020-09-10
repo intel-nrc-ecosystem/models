@@ -33,10 +33,13 @@ def includeSystem(self):
     self.expLogPath = None  # The explicit path within dataLogPath, which is set when parameter instance is created, it depends on datetime
 
     # Loihi chip
-    self.numChips = 2  # number of cores available in current setting
-    self.numCoresPerChip = 128  # number of cores per chip in current setting
-    self.neuronsPerCore = 20 #1024 #10 #20 #55  # numer of neurons distributed to each Loihi core
-    self.bufferFactor = 20  # number of timesteps the buffer should collect spike data from the Loihi cores
+    self.numChips = 2  # Number of cores available in current setup
+    self.numCoresPerChip = 128  # Number of cores per chip in current setup
+    self.neuronsPerCore = 20  # Numer of neurons distributed to each Loihi core
+    self.bufferFactor = 20  # Number of timesteps the buffer should collect spike data from the Loihi cores
+    self.numTagBits = 0  # Bits available for tag precision
+    self.numDelayBits = 0  # Bits available for synaptic delay precision
+    self.numWeightBits = 8  # Bits available for weight precision
 
     # Validity check
     self.maxSparseToDenseLimit = 6000  # When e.g. doing an imshow plot a normal dense matrix is necessary, which only can be transformed from a sparse matrix, when memory is sufficient

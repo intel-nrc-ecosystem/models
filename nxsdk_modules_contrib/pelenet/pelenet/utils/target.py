@@ -21,7 +21,7 @@ def loadTarget(self):
         Prepares dataset for estimation
 @pars:
         data: has dimensions B (number of trials) x N (number of neurons) x T (number of time steps per trial)
-        target: n-dim target function
+        target: T-dim target function
         binSize: bin works as sliding window to smooth spikes with binSize into the past
         trainTrials: binary array for choosing trials for training (default: all but last trial)
         testTrial: integer which gives the trial number to test with (default: last trial)
@@ -52,7 +52,11 @@ def prepareDataset(self, data, target, binSize=None, trainTrials=None, testTrial
     xe = np.insert(testSpikes, 0, 1.0, axis=0)  # Add intercept
     
     # Select target
-    y = np.tile(target[:,:self.p.stepsPerTrial], np.sum(trainTrials))
+    y = None
+    if len(target.shape) == 1:
+        y = np.tile(target[:self.p.stepsPerTrial-binSize], np.sum(trainTrials))
+    if len(target.shape) == 2:
+        y = np.tile(target[:,:self.p.stepsPerTrial-binSize], np.sum(trainTrials))
 
     # Return dataset
     return (x, xe, y)

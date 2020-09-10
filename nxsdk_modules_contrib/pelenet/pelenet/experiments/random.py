@@ -14,54 +14,57 @@ from ..plots import Plot
 from ..network import ReservoirNetwork
 
 """
-@desc: Class for running an experiment, usually contains performing
-       several networks (e.g. for training and testing)
+@desc: Randomly connected network
 """
-class StaticExperiment():
+class RandomExperiment():
 
     """
     @desc: Initiates the experiment
     """
-    def __init__(self):
-        self.p = Parameters(update = self.updateParameters())
+    def __init__(self, name='', parameters={}):
+        self.p = Parameters(update = self.updateParameters(parameters))
 
         self.net = None
         self.trainSpikes = None
 
         # Instantiate system singleton and add datalog object
         self.system = System.instance()
-        datalog = Datalog(self.p)
+        datalog = Datalog(self.p, name=name)
         self.system.setDatalog(datalog)
 
         # Instantiate utils and plot
-        self.utils = Utils.instance()
-        self.utils.setParameters(self.p)
+        self.utils = Utils.instance(parameters=self.p)
         self.plot = Plot(self)
 
     """
     @desc: Overwrite parameters for this experiment
     """
-    def updateParameters(self):
-        return {
+    def updateParameters(self, jupP={}):
+        expP = {
             # Experiment
-            'trials': 1,
-            'stepsPerTrial': 600,
+            'seed': 1,  # Random seed
+            'trials': 1,  # Number of trials
+            'stepsPerTrial': 600,  # Number of simulation steps for every trial
             # Network
-            #'reservoirConnPerNeuron': 40,
-            'reservoirConnProb': 0.004,
-            #'weightExCoefficient': 12, #12
-            #'weightInCoefficient': 48,
+            'reservoirExSize': 400,  # Number of excitatory neurons
+            'reservoirConnPerNeuron': 40,  # Number of connections per neuron
             # Neurons
-            'refractoryDelay': 2, #5, #2 # Sparse activity (high values) vs. dense activity (low values)
-            'compartmentVoltageDecay': 100, #500, #100,#400 #500,  # Slows down / speeds up
-            'compartmentCurrentDecay': 4096, #500, #300, #500,  # Variability (higher values) vs. Stability (lower values)
-            'thresholdMant': 50, #400, #1000, #800,  # Slower spread (high values) va. faster spread (low values)
+            'refractoryDelay': 2,  # Refactory period
+            'voltageTau': 20,  # Voltage time constant
+            'currentTau': 5,  # Current time constant
+            'thresholdMant': 800,  # Spiking threshold for membrane potential
             # Input
-            'patchSize': 20,
+            'inputGenSpikeProb': 0.5,  # Probability of spikes for the spike generators
+            'inputWeightExponent': 2,  # Weight exponent for the connections from the generators to the reservoir neurons
+            'inputNumTargetNeurons': 50,  # Number of neurons targeted by the spike generators
+            'inputSteps': 10,  # Number of steps the input is active
             # Probes
-            'isExSpikeProbe': True,
-            'isInSpikeProbe': True
+            'isExSpikeProbe': True,  # Probe excitatory spikes
+            'isInSpikeProbe': True  # Probe inhibitory spikes
         }
+
+        # Parameters from jupyter notebook overwrite parameters from experiment definition
+        return { **expP, **jupP}
     
     """
     @desc: Build network
@@ -77,18 +80,13 @@ class StaticExperiment():
         self.net.connectReservoir()
 
         # Add patch input
-        self.net.addRepeatedPatchGenerator()
+        self.net.addInput()
 
-        # Plot histogram of weights and calc spectral radius
-        #self.net.plot.initialExWeightDistribution()
-
-        # Plot weight matrix
-        #self.net.plot.initialExWeightMatrix()
-
-        # Build the network structure
-        self.net.build()
+        # Add Probes
+        self.net.addProbes()
+    
     """
-    @desc: Run network
+    @desc: Run experiment
     """
     def run(self):
         # Run network

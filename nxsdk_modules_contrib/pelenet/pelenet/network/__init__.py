@@ -27,11 +27,22 @@ class ReservoirNetwork():
         # Instanciate nx net object
         self.nxNet = nx.NxNet()
 
-        # Define prototypes
-        #self.neuronCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=20, refractoryDelay=2)  # compartment prototype (default neuron)
-        self.exConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.EXCITATORY, numTagBits=0, numDelayBits=0, numWeightBits=8)  # excitatory connection prototype
-        self.inConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.INHIBITORY, numTagBits=0, numDelayBits=0, numWeightBits=8)  # inhibitory connection prototype
-        self.mixedConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.MIXED)  # mixed connection prototype
+        # Excitatory connection prototype
+        self.exConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.EXCITATORY,
+                                                  weightExponent=self.p.weightExponent, numTagBits=self.p.numTagBits,
+                                                  numDelayBits=self.p.numDelayBits, numWeightBits=self.p.numWeightBits)
+        # Inhibitory connection prototype
+        self.inConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.INHIBITORY,
+                                                  weightExponent=self.p.weightExponent, numTagBits=self.p.numTagBits,
+                                                  numDelayBits=self.p.numDelayBits, numWeightBits=self.p.numWeightBits)
+        # Mixed connection prototype
+        self.mixedConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.MIXED,
+                                                     weightExponent=self.p.weightExponent, numTagBits=self.p.numTagBits,
+                                                     numDelayBits=self.p.numDelayBits, numWeightBits=self.p.numWeightBits)
+        # Generator connection prototype
+        self.genConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.EXCITATORY,
+                                                   weightExponent=self.p.inputWeightExponent, numTagBits=self.p.numTagBits,
+                                                   numDelayBits=self.p.numDelayBits, numWeightBits=self.p.numWeightBits)
 
         """
         Network objects
@@ -72,10 +83,8 @@ class ReservoirNetwork():
 
         # Spikes
         self.exSpikeTrains = []
-        self.exSpikeData = []
         self.inSpikeTrains = []
         self.outSpikeTrains = []
-        self.outSpikeData = []
 
         # Voltages
         self.outVoltageTrains = []
@@ -85,10 +94,10 @@ class ReservoirNetwork():
         self.traceMasks = []
         self.traceWeights = []
 
-        # Cue input
-        self.patchNeurons = None
-        self.patchSpikes = []
-        self.patchWeights = None
+        # Input
+        self.inputTargetNeurons = []
+        self.inputSpikes = []
+        self.inputWeights = None
 
         # Noise input spikes
         self.noiseSpikes = None
@@ -109,20 +118,13 @@ class ReservoirNetwork():
         self.postProcessing()
 
     """
-    @desc: Build default network structure
-    """
-    def build(self):
-        # Add probes
-        self.addProbes()
-
-    """
     @note: Import functions from files
     """
     from .connect import removeCoreFromList, connectReservoir, connectOutput
-    from .input import addRepeatedPatchGenerator, addTraceGenerator
+    from .input import addInput
     from .noise import addNoiseGenerator, addConstantGenerator
     from .output import drawOutputMaskAndWeights
-    from .probes import addProbes, condenseData, postProcessing
+    from .probes import addProbes, condenseSpikeProbes, postProcessing
     from .snips import addResetSnips, createAndConnectResetInitChannels
     from .weights import (
         drawAndSetSparseReservoirWeightMatrix, drawSparseWeightMatrix,

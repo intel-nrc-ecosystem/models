@@ -12,11 +12,11 @@ class Singleton:
         # Store decorated class for its use in 'instance' method
         self.decoratedClass = decoratedClass
 
-    def instance(self):
+    def instance(self, *args, **kwargs):
         # Check if instance already exists
         if self._instance is None:
             # If instance was not already created, create one from the decorated class
-            self._instance = self.decoratedClass()
+            self._instance = self.decoratedClass(*args, **kwargs)
         # In any case: return instance
         return self._instance
 

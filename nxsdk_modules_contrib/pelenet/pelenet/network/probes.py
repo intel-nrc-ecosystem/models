@@ -16,7 +16,6 @@ def postProcessing(self):
         for i in range(len(self.exSpikeProbes)):
             spks.append(self.exSpikeProbes[i].data)
         self.exSpikeTrains = np.vstack(spks)
-        self.exSpikeData = self.condenseData(np.vstack(spks))
 
     # Combine spike probes from all chunks together for inhibitory neurons
     if self.p.isInSpikeProbe:
@@ -31,7 +30,6 @@ def postProcessing(self):
         for i in range(len(self.outSpikeProbes)):
             spks.append(self.outSpikeProbes[i].data)
         self.outSpikeTrains = np.vstack(spks)
-        self.outSpikeData = self.condenseData(np.vstack(spks))
 
     # Combine spike probes from all chunks together for inhibitory neurons
     if self.p.isOutVoltageProbe:
@@ -41,7 +39,7 @@ def postProcessing(self):
         self.outVoltageTrains = np.vstack(spks)
 
     # Recombine all weights from probe chunks together to a matrix again
-    if self.p.weightProbe:
+    if self.p.isWeightProbe:
         self.trainedWeightsExex = self.utils.recombineExWeightMatrix(self.initialWeights.exex, self.weightProbes)
 
     # Log that post processing has finished
@@ -50,7 +48,7 @@ def postProcessing(self):
 """
 @desc: Remove offsets from data
 """
-def condenseData(self, raw):
+def condenseSpikeProbes(self, raw):
     # Get total offset
     offset = self.p.resetOffset + self.p.inputOffset
 
@@ -95,7 +93,7 @@ def addProbes(self):
             self.inCurrentProbes.append(net.probe([nx.ProbeParameter.COMPARTMENT_CURRENT ])[0])
     
     # Probe weights
-    if self.p.weightProbe:
+    if self.p.isWeightProbe:
         probeCond = nx.IntervalProbeCondition(tStart=self.p.totalSteps-1, dt=self.p.totalSteps)
         #probeCond = nx.IntervalProbeCondition(tStart=self.p.stepsPerIteration-1, dt=self.p.stepsPerIteration)
         n, m = np.shape(self.connectionChunks)

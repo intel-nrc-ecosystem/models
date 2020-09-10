@@ -2,8 +2,7 @@
 #
 # connectivity_landscape.py
 #
-# Copyright 2017 Sebastian Spreizer
-# The MIT License
+# Code is taken from: https://github.com/babsey/spatio-temporal-activity-sequence/tree/6d4ab597c98c01a2a9aa037834a0115faee62587
 
 import numpy as np
 import noise

@@ -38,7 +38,8 @@ def connectReservoir(self):
                                             y1Impulse=self.p.learningImpulse, y1TimeConstant=self.p.learningTimeConstant)
         # Define connection prototype with learning rule
         exConnProto = nx.ConnectionPrototype(signMode=nx.SYNAPSE_SIGN_MODE.EXCITATORY,
-                                                enableLearning=1, learningRule=lr)
+                                             weightExponent=self.p.weightExponent,
+                                             enableLearning=1, learningRule=lr)
     else:
         # Define connection prototype from basic network
         exConnProto = self.exConnProto
@@ -48,8 +49,8 @@ def connectReservoir(self):
     frCore, toCore = self.cores[0], self.cores[0]+nExCores
     for i in range(frCore, toCore):
         # Excitatory compartment prototype
-        exCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=self.p.compartmentVoltageDecay,
-                                              compartmentCurrentDecay=self.p.compartmentCurrentDecay,
+        exCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=int(1/self.p.voltageTau*2**12),
+                                              compartmentCurrentDecay=int(1/self.p.currentTau*2**12),
                                               vThMant=self.p.thresholdMant,
                                               refractoryDelay=self.p.refractoryDelay, logicalCoreId=i,
                                               enableSpikeBackprop=self.p.isLearningRule, enableSpikeBackpropFromSelf=self.p.isLearningRule,
@@ -66,8 +67,8 @@ def connectReservoir(self):
     frCore, toCore = self.cores[0], self.cores[0]+nInCores
     for i in range(frCore, toCore):
         # Inhibitory compartment prototype
-        inCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=self.p.compartmentVoltageDecay,
-                                              compartmentCurrentDecay=self.p.compartmentCurrentDecay,
+        inCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=int(1/self.p.voltageTau*2**12),
+                                              compartmentCurrentDecay=int(1/self.p.currentTau*2**12),
                                               vThMant=self.p.thresholdMant,
                                               refractoryDelay=self.p.refractoryDelay, logicalCoreId=i,
                                               functionalState=nx.COMPARTMENT_FUNCTIONAL_STATE.IDLE)
@@ -79,7 +80,7 @@ def connectReservoir(self):
         self.removeCoreFromList()
 
     # Interconnect excitatory and inhibitory network chunks
-    connectNetworkChunks(self, fromChunks=self.exReservoirChunks, toChunks=self.exReservoirChunks, mask=self.initialMasks.exex, weights=self.initialWeights.exex, prototype=exConnProto) #store=True, prototype=exConnProto)
+    connectNetworkChunks(self, fromChunks=self.exReservoirChunks, toChunks=self.exReservoirChunks, mask=self.initialMasks.exex, weights=self.initialWeights.exex, prototype=exConnProto, store=self.p.isWeightProbe)
     connectNetworkChunks(self, fromChunks=self.inReservoirChunks, toChunks=self.inReservoirChunks, mask=self.initialMasks.inin, weights=self.initialWeights.inin, prototype=self.inConnProto)
     connectNetworkChunks(self, fromChunks=self.exReservoirChunks, toChunks=self.inReservoirChunks, mask=self.initialMasks.exin, weights=self.initialWeights.exin, prototype=self.exConnProto)
     connectNetworkChunks(self, fromChunks=self.inReservoirChunks, toChunks=self.exReservoirChunks, mask=self.initialMasks.inex, weights=self.initialWeights.inex, prototype=self.inConnProto)
@@ -101,8 +102,8 @@ def connectOutput(self):
     frCore, toCore = self.cores[0], self.cores[0]+nOutCores
     for i in range(frCore, toCore):
         # Output compartment prototype
-        outCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=self.p.compartmentVoltageDecay,
-                                               compartmentCurrentDecay=self.p.compartmentCurrentDecay,
+        outCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=int(1/self.p.voltageTau*2**12),
+                                               compartmentCurrentDecay=int(1/self.p.currentTau*2**12),
                                                vThMant=self.p.thresholdMant,
                                                refractoryDelay=self.p.refractoryDelay, logicalCoreId=i,
                                                functionalState=nx.COMPARTMENT_FUNCTIONAL_STATE.IDLE)
@@ -138,10 +139,9 @@ def connectNetworkChunks(self, fromChunks, toChunks, mask, weights, store=False,
             we = weights[jfr:jto, ifr:ito].toarray()
 
             # Connect network chunks
+            #conn = fromChunks[i].connect(toChunks[j], connectionMask=ma, weightExponent=self.p.weightExponent, weight=we, **connectionArgs)
             conn = fromChunks[i].connect(toChunks[j], connectionMask=ma, weight=we, **connectionArgs)
-            if store:
-                tmp.append(conn)
+            if store: tmp.append(conn)
         
         # If store flag is set, also store all connection chunks
-        if store:
-            self.connectionChunks.append(tmp)
+        if store: self.connectionChunks.append(tmp)

@@ -58,22 +58,22 @@ def recombineExWeightMatrix(self, initialExWeights, exWeightProbes):
 @return: Mask of the bottom-left area of the matrix
 """
 def getSupportWeightsMask(self, exWeightMatrix):
-    nCs = self.p.traceClusterSize
+    nCs = self.p.inputNumTargetNeurons
     nEx = self.p.reservoirExSize
-    nC = self.p.traceClusters
+    nC = self.p.inputSequenceSize
     matrix = exWeightMatrix
 
     # Get areas in matrix
-    left = matrix[:,:nC*nCs]  # left
-    top = matrix[:nC*nCs,:]  # top
-    bottom = matrix[nC*nCs:,:]  # bottom
-    bottomLeft = matrix[nC*nCs:,:nC*nCs]  # bottom-left
+    #left = matrix[:,:nC*nCs].toarray()  # left
+    #top = matrix[:nC*nCs,:].toarray()  # top
+    #bottom = matrix[nC*nCs:,:].toarray()  # bottom
+    bottomLeft = matrix[nC*nCs:,:nC*nCs].toarray()  # bottom-left
 
     # Get single cluster colums in bottom-left area (candidates for support weights)
     cols = np.array([ bottomLeft[:,i*nCs:(i+1)*nCs] for i in range(nC)])
 
     # Calculate means for every column in bottom-left
-    col_rowmeans = np.array([np.mean(cols[i,...], axis=1) for i in range(nC)])
+    col_rowmeans = np.array([np.mean(cols[i], axis=1) for i in range(nC)])
 
     # Condition 1: Get only rows their mean is greater than total mean
     greaterMeanIndices = col_rowmeans > np.mean(bottomLeft)
