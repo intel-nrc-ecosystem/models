@@ -47,11 +47,12 @@ def includeExperiment(self):
     self.learningEpoch = 4  # learning epoch for learning rule
 
     # Noise
-    self.noiseNeuronsShare = 0.1 # share of noise neurons in relation to excitatory neurons
-    self.noiseNeurons = None  # number of noise neurons (calculated if None)
-    self.noiseSpikeprob = 0.05  # in average, every 1/x th time step a noise neuron fires
-    self.noiseDens = 0.05 # 0.005 # connectivity between noise neurons and reservoir
-    self.noiseMaxWeight = 10 #2  # maximum weight a noise connection can have
+    self.isNoise = False  # Activates noise
+    self.noiseNeuronsShare = 0.1  # Share of noise neurons in relation to excitatory neurons
+    self.noiseNeurons = None  # Number of noise neurons (calculated if None)
+    self.noiseSpikeprob = 0.05  # In average, every 1/x th time step a noise neuron fires
+    self.noiseDens = 0.05 # 0.005 # Connectivity between noise neurons and reservoir
+    self.noiseMaxWeight = 10 #2  # Maximum weight a noise connection can have
 
     """
     Output

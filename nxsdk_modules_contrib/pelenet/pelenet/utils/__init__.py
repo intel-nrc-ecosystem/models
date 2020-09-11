@@ -14,6 +14,7 @@ class Utils():
     """
     def __init__(self, parameters=None):
         if parameters is None:
+            logging.warning('Utils was initialized without specific parameters.')
             warnings.warn(
                 "No parameters were specified and default parameters are used, this may cause unexpected behavior. "
                 "It is more save to pass parameters when instanciating Utils singleton for the first time. "

@@ -1,47 +1,17 @@
-# Official modules
-import numpy as np
-import matplotlib.pyplot as plt
-import statsmodels.api as sm
-from tabulate import tabulate
-from copy import deepcopy
-
 # Pelenet modules
-from ..system import System
-from ..system.datalog import Datalog
-from ..parameters import Parameters
-from ..utils import Utils
-from ..plots import Plot
-from ..network import ReservoirNetwork
+from ._abstract import Experiment
 
 """
 @desc: Class for running an experiment, usually contains performing
        several networks (e.g. for training and testing)
 """
-class SequenceExperiment():
+class SequenceExperiment(Experiment):
 
     """
-    @desc: Initiates the experiment
+    @desc: Define parameters for this experiment
     """
-    def __init__(self, name='', parameters={}):
-        # Parameters
-        self.p = Parameters(update = self.updateParameters(parameters))
-
-        self.net = None
-
-        # Instantiate system singleton and add datalog object
-        self.system = System.instance()
-        datalog = Datalog(self.p, name=name)
-        self.system.setDatalog(datalog)
-
-        # Instantiate utils and plot
-        self.utils = Utils.instance(parameters=self.p)
-        self.plot = Plot(self)
-
-    """
-    @desc: Overwrite parameters for this experiment
-    """
-    def updateParameters(self, jupP={}):
-        expP = {
+    def defineParameters(self):
+        return {
             # Experiment
             'seed': 1,  # Random seed
             'trials': 10,  # Number of trials
@@ -67,48 +37,6 @@ class SequenceExperiment():
             'isInSpikeProbe': True,  # Probe inhibitory spikes
             'isWeightProbe': True  # Probe weight matrix at the end of the simulation
         }
-
-        # Parameters from jupyter notebook overwrite parameters from experiment definition
-        return { **expP, **jupP}
-
-    """
-    @desc: Build reservoir network with all parts (input, output, noise, etc.)
-    """
-    def build(self):
-        # Instanciate innate network
-        self.net = ReservoirNetwork(self.p)
-
-        # Draw anisotropic mask and weights
-        self.drawMaskAndWeights()
-
-        # Connect ex-in reservoir
-        self.net.connectReservoir()
-
-        # Add cue
-        self.net.addInput()
-
-        # Add background noise
-        #self.net.addNoiseGenerator()
-
-        # Add Probes
-        self.net.addProbes()
-
-    """
-    @desc: Run experiment
-    """
-    def run(self):
-        # Run network
-        self.net.run()
-
-    """
-    @desc: Draw mask and weights
-    """
-    def drawMaskAndWeights(self):
-        # Draw and store mask matrix
-        mask = self.net.drawAndSetSparseReservoirMaskMatrix()
-
-        # Draw and store weight matrix
-        self.net.drawAndSetSparseReservoirWeightMatrix(mask)
 
     """
     @desc: Call several function in order to evaluate results

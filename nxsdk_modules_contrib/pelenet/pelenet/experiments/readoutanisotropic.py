@@ -1,20 +1,7 @@
-# Loihi modules
-import nxsdk.api.n2a as nx
-
-# Official modules
-import numpy as np
-import logging
-from copy import deepcopy
-import os
-
 # Pelenet modules
-from ..system import System
-from ..system.datalog import Datalog
-from ..parameters import Parameters
-from ..utils import Utils
-from ..plots import Plot
 from .anisotropic import AnisotropicExperiment
 from ..network import ReservoirNetwork
+from ._abstract import Experiment
 
 """
 @desc: Class for running an experiment, usually contains performing
@@ -23,32 +10,11 @@ from ..network import ReservoirNetwork
 class AnisotropicReadoutExperiment(AnisotropicExperiment):
 
     """
-    @desc: Initiates the experiment
-    """
-    def __init__(self, name='', parameters={}):
-        # Parameters
-        self.p = Parameters(update = self.updateParameters(parameters))
-
-        self.net = None
-
-        # Instantiate system singleton and add datalog object
-        self.system = System.instance()
-        datalog = Datalog(self.p, name=name)
-        self.system.setDatalog(datalog)
-
-        # Instantiate utils and plot
-        self.utils = Utils.instance(parameters=self.p)
-        self.plot = Plot(self)
-
-        # Define some further variables
-        #self.target = self.utils.loadTarget()
-
-    """
-    @desc: Overwrite parameters for this experiment
-    """
-    def updateParameters(self, jupP={}):
+    # @desc: Define parameters for this experiment
+    # """
+    def defineParameters(self):
         # Parent parameters
-        aniP = super().updateParameters()
+        aniP = super().defineParameters()
 
         expP = {
             # Experiment
@@ -87,9 +53,8 @@ class AnisotropicReadoutExperiment(AnisotropicExperiment):
             'isOutSpikeProbe': True   # Probe output spikes
         }
 
-        # Parameters from jupyter notebook overwrite parameters from experiment definition
         # Experiment parameters overwrite parameters from parent experiment
-        return { **aniP, **expP, **jupP}
+        return { **aniP, **expP }
     
     """
     @desc: Build all networks
@@ -116,36 +81,3 @@ class AnisotropicReadoutExperiment(AnisotropicExperiment):
 
         # Add Probes
         self.net.addProbes()
-    
-    """
-    @desc: Run whole experiment
-    """
-    def run(self):
-        # Compile network
-        compiler = nx.N2Compiler()
-        board = compiler.compile(self.net.nxNet)
-        logging.info('Network successfully compiled')
-
-        # Add snips and channel
-        resetInitSnips = self.net.addResetSnips(board)  # add snips
-        resetInitChannels = self.net.createAndConnectResetInitChannels(board, resetInitSnips)  # create channels for transfering initial values for the reset SNIP
-        
-        # Start board
-        board.start()
-        logging.info('Board successfully started')
-
-        # Write initial data to channels
-        for i in range(self.p.numChips):
-            resetInitChannels[i].write(3, [
-                self.p.neuronsPerCore,  # number of neurons per core
-                self.p.totalTrialSteps,  # reset interval
-                self.p.resetSteps  # number of steps to clear voltages/currents
-            ])
-        logging.info('Initial values transfered to SNIPs via channel')
-
-        # Run and disconnect board
-        board.run(self.p.totalSteps)
-        board.disconnect()
-
-        # Perform postprocessing
-        self.net.postProcessing()

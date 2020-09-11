@@ -1,10 +1,5 @@
 # Official modules
-import os
 import numpy as np
-import matplotlib.pyplot as plt
-import statsmodels.api as sm
-from tabulate import tabulate
-from copy import deepcopy
 from scipy import sparse
 import logging
 
@@ -12,45 +7,21 @@ import logging
 import lib.anisotropic.lcrn_network as lcrn
 import lib.anisotropic.connectivity_landscape as cl
 
-# Own modules
-from ..system import System
-from ..system.datalog import Datalog
-from ..parameters import Parameters
-from ..utils import Utils
-from ..plots import Plot
+# Pelenet modules
 from ..network import ReservoirNetwork
+from ._abstract import Experiment
 
 """
 @desc: Class for running an experiment, usually contains performing
        several networks (e.g. for training and testing)
 """
-class AnisotropicExperiment():
+class AnisotropicExperiment(Experiment):
 
     """
-    @desc: Initiates the experiment
-    """
-    # TODO user decorator for default stuff (like creating instances),
-    # maybe some stuff from basicNetwork can be included?
-    def __init__(self, name='', parameters={}):
-        # Parameters
-        self.p = Parameters(update = self.updateParameters(parameters))
-
-        self.net = None
-
-        # Instantiate system singleton and add datalog object
-        self.system = System.instance()
-        datalog = Datalog(self.p, name=name)
-        self.system.setDatalog(datalog)
-
-        # Instantiate utils and plot
-        self.utils = Utils.instance(parameters=self.p)
-        self.plot = Plot(self)
-
-    """
-    @desc: Overwrite parameters for this experiment
-    """
-    def updateParameters(self, jupP={}):
-        expP = {
+    # @desc: Define parameters for this experiment
+    # """
+    def defineParameters(self):
+        return {
             # Experiment
             'seed': 3,  # Random seed
             'trials': 1,  # Number of trials
@@ -79,9 +50,6 @@ class AnisotropicExperiment():
             'isExSpikeProbe': True,  # Probe excitatory spikes
             'isInSpikeProbe': True   # Probe inhibitory spikes
         }
-
-        # Parameters from jupyter notebook overwrite parameters from experiment definition
-        return { **expP, **jupP}
     
     """
     @desc: Build network
@@ -103,6 +71,13 @@ class AnisotropicExperiment():
         # Add Probes
         self.net.addProbes()
 
+    # """
+    # @desc: Run experiment
+    # """
+    # def run(self):
+    #     # Run network
+    #     self.net.run()
+
     """
     @desc: Summary of some plots about the network
     """
@@ -112,13 +87,6 @@ class AnisotropicExperiment():
 
         # Plot weight matrix
         self.net.plot.initialExWeightMatrix()
-
-    """
-    @desc: Run experiment
-    """
-    def run(self):
-        # Run network
-        self.net.run()
 
     """
     @desc: Draw mask and weights

@@ -3,13 +3,11 @@ import logging
 
 """
 @desc: Add SNIPs to the chips of the system
-
-TODO: Only add SNIPs to used chips, not to all available chips on the system
 """
 def addResetSnips(self, board):
     # Add one SNIPs to every chip
     resetInitSnips = []
-    for i in range(self.p.numChips):
+    for i in range(self.numChipsUsed):
         # SNIP for initializing some values for the reset SNIP
         resetInitSnips.append(board.createSnip(
             name='init'+str(i),
@@ -22,7 +20,7 @@ def addResetSnips(self, board):
 
     # SNIPs for resetting the voltages and currents
     resetSnips = []
-    for i in range(self.p.numChips):
+    for i in range(self.numChipsUsed):
         # Add one SNIP for every chip
         board.createSnip(
             name='reset'+str(i),
@@ -44,7 +42,7 @@ def addResetSnips(self, board):
 def createAndConnectResetInitChannels(self, board, resetInitSnips):
     resetInitChannels = []
     # Add one channel to every chip
-    for i in range(self.p.numChips):
+    for i in range(self.numChipsUsed):
         # Create channel for init data with buffer size of 3
         initResetChannel = board.createChannel(bytes('initreset'+str(i), 'utf-8'), "int", 3)
         

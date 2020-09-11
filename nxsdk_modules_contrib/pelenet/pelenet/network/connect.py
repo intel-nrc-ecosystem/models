@@ -1,5 +1,6 @@
 import nxsdk.api.n2a as nx
 import numpy as np
+import math
 from scipy import sparse
 import logging
 
@@ -9,12 +10,16 @@ import logging
 """
 def removeCoreFromList(self):
     # Check if cores are still available
-    if len(self.cores) > 0:
+    if len(self.coresAvailable) > 0:
         # Remove first element of array
-        self.cores = np.delete(self.cores, [0])
+        self.coresAvailable = np.delete(self.coresAvailable, [0])
     else:
         logging.error('Available cores exceeded, change setup parameters or rearange network')
         raise RuntimeError('Available cores exceeded, change setup parameters or rearange network.')
+
+    # Update number of used cores and chips
+    self.numCoresUsed = len(np.delete(np.arange(self.p.numCores), self.coresAvailable))
+    self.numChipsUsed = math.ceil(self.numCoresUsed / self.p.numCoresPerChip)
 
 """
 @desc: Connects reservoir neurons
@@ -46,7 +51,7 @@ def connectReservoir(self):
 
     # Define excitatory compartment prototypes and compartment groups
     # initial value is first available core id in core list
-    frCore, toCore = self.cores[0], self.cores[0]+nExCores
+    frCore, toCore = self.coresAvailable[0], self.coresAvailable[0]+nExCores
     for i in range(frCore, toCore):
         # Excitatory compartment prototype
         exCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=int(1/self.p.voltageTau*2**12),
@@ -64,7 +69,7 @@ def connectReservoir(self):
 
     # Define inhibitory compartment prototypes and compartment groups
     # initial value is first available core id in core list
-    frCore, toCore = self.cores[0], self.cores[0]+nInCores
+    frCore, toCore = self.coresAvailable[0], self.coresAvailable[0]+nInCores
     for i in range(frCore, toCore):
         # Inhibitory compartment prototype
         inCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=int(1/self.p.voltageTau*2**12),
@@ -99,7 +104,7 @@ def connectOutput(self):
 
     # Define output compartment prototypes and compartment groups
     # initial value is first available core id in core list
-    frCore, toCore = self.cores[0], self.cores[0]+nOutCores
+    frCore, toCore = self.coresAvailable[0], self.coresAvailable[0]+nOutCores
     for i in range(frCore, toCore):
         # Output compartment prototype
         outCompProto = nx.CompartmentPrototype(compartmentVoltageDecay=int(1/self.p.voltageTau*2**12),

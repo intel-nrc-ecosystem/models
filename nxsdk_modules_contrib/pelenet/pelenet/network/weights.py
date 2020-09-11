@@ -170,3 +170,13 @@ def getWeightMatrixFromProbe(self, probeIndex=-1):
 
     # Return weight matrix from probe
     return weightMatrix
+
+"""
+@desc: Draw mask and weights
+"""
+def drawMaskAndWeights(self):
+    # Draw and store mask matrix
+    ma = drawAndSetSparseReservoirMaskMatrix(self)
+
+    # Draw and store weight matrix
+    drawAndSetSparseReservoirWeightMatrix(self, ma)

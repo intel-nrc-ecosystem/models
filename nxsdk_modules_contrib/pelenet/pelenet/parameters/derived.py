@@ -20,6 +20,7 @@ def computeDerived(self):
     """
     
     # Derived output values
+    self.numCores = self.numChips*self.numCoresPerChip
     self.numOutClusters = int(self.reservoirExSize / np.square(self.partitioningClusterSize))
     self.numOutputNeurons = 2 * self.numOutClusters
     self.numOutDimSize = int(np.sqrt(self.numOutClusters))
