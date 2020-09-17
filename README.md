@@ -12,3 +12,4 @@ For community support, Q&A and other information, please visit: http://neuromorp
 
 ## Acknowledgments
 
+* PCritical : Ismael Balafrej, prof. Jean Rouat. University of Sherbrooke. [NEuro COmputational & Intelligent Signal Processing Research Group (NECOTIS)](http://www.gel.usherbrooke.ca/necotis/)
