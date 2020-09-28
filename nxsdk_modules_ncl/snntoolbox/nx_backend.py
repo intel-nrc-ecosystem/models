@@ -1345,7 +1345,6 @@ def print_performance(stats, num_timesteps):
     lakemont_dynamic = stats['power']['lakemont']['dynamic']
     core_static = stats['power']['core']['static']
     core_dynamic = stats['power']['core']['dynamic']
-    total = stats['power']['total']
     print("Static power (x86): {} mW".format(lakemont_static))
     print("Dynamic power (x86): {} mW".format(lakemont_dynamic))
     print("Total power (x86): {} mW".format(lakemont_static +
@@ -1356,9 +1355,10 @@ def print_performance(stats, num_timesteps):
                                                     core_dynamic))
     print("Static power (system): {} mW".format(stats['power']['static']))
     print("Dynamic power (system): {} mW".format(stats['power']['dynamic']))
-    print("Total power (system): {} mW".format(total))
+    print("Total power (system): {} mW".format(stats['power']['total']))
     time_per_sample = stats.timePerTimestep * num_timesteps / 1e3
-    energy_per_sample = total * time_per_sample / 1e3  # mJ
+    power = lakemont_static + lakemont_dynamic + core_static + core_dynamic
+    energy_per_sample = power * time_per_sample / 1e3  # mJ
     print("Timesteps per inference: {}".format(num_timesteps))
     print("Energy per inference: {} mJ".format(energy_per_sample))
     print("Execution time per inference: {} ms".format(time_per_sample))
