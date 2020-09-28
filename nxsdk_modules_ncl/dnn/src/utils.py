@@ -495,7 +495,8 @@ def _getSizeInterleaved(coreShape, destinationGroups, neuronSize):
         * neuronSize
 
 
-def _getUniqueSourceGroups(interleavedMap, cxBaseOffsets, sizeSrcGroup):
+def _getUniqueSourceGroups(interleavedMap, cxBaseOffsets, sizeSrcGroup,
+                           sharing=None):
     """Get unique source groups.
 
     :param lil_matrix interleavedMap: The interleaved kernelIdMap. Rows
@@ -503,6 +504,11 @@ def _getUniqueSourceGroups(interleavedMap, cxBaseOffsets, sizeSrcGroup):
     :param np.ndarray cxBaseOffsets: Vector of cxBaseOffsets of each source
         group.
     :param int sizeSrcGroup: Number of neurons belonging to each group.
+    :param str sharing: Optional flag to fake different weight sharing
+        behavior. When set to 'off', we disable synapse sharing on Loihi. When
+        set to 'full', we fake full CNN weight sharing by returning only a
+        single unique source group (only for measuring resource allocation, not
+        accuracy).
 
     :return: (uniqueGroups, synListPtrs) tuple
     """
@@ -537,10 +543,16 @@ def _getUniqueSourceGroups(interleavedMap, cxBaseOffsets, sizeSrcGroup):
             if prevLength != length:
                 axis = None
 
-    _, ids, invIds = np.unique(list(groupsFlat.values()), axis=axis,
-                               return_index=True, return_inverse=True)
-
-    uniqueGroups = [groups[i] for i in ids]
+    if sharing == 'off':
+        invIds = np.arange(len(groups))
+        uniqueGroups = groups
+    elif sharing == 'full':
+        invIds = np.zeros(len(groups), int)
+        uniqueGroups = groups[:1]
+    else:
+        _, ids, invIds = np.unique(list(groupsFlat.values()), axis=axis,
+                                   return_index=True, return_inverse=True)
+        uniqueGroups = [groups[i] for i in ids]
 
     synListPtrs = {}
     i = 0

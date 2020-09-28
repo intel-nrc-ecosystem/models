@@ -193,7 +193,7 @@ def plot_core_utilization(layers, path):
     config entries.
 
     :param list[Layer] layers: List of partitioned layers.
-    :param str path: Where to load the data from.
+    :param str path: Where to write the output to.
     """
 
     compartments = []
@@ -262,6 +262,9 @@ def plot_core_utilization(layers, path):
     ax.xaxis.set_minor_locator(AutoMinorLocator(2))
     ax.grid(b=True, axis='x', which='minor')
     fig.savefig(os.path.join(path, 'core_utilization'), bbox_inches='tight')
+    np.savez_compressed(os.path.join(path, 'core_utilization'),
+                        cx=compartments, in_ax=input_axons,
+                        out_ax=output_axons, syn=synapses)
 
 
 def plot_multiplicity(m, path, name):
