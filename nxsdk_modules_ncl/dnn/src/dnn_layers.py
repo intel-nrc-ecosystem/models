@@ -3050,7 +3050,8 @@ class NxModel(Model):
             # This enables accessing neuron fields directly, e.g. for probes.
             compilableLayer.setBoardAndCxResourceMap(
                 self.board, mappableLayer.genCxResourceMap())
-            if 'Input' in compilableLayer.__class__.__name__:
+            if 'Input' in compilableLayer.__class__.__name__ and \
+                    compilableLayer.inputMode == InputModes.AEDAT:
                 compilableLayer.inputAxonResourceMap = \
                     mappableLayer.genInputAxonResourceMap()
 
