@@ -21,7 +21,8 @@ import math
 import numpy as np
 from scipy.sparse import lil_matrix
 
-from nxsdk_modules_ncl.dnn.src.data_structures import SynFmt, SynEntry, Compression
+from nxsdk_modules_ncl.dnn.src.data_structures import SynFmt, SynEntry, \
+    Compression
 
 
 class SynapseEncoder:
@@ -452,6 +453,9 @@ def reconstructKMapFromPartitions(partitions, shape):
             for srcId, synEntries in zip(inputAxonGroup.srcNodeIds,
                                          synapseGroup.synEntries):
                 for synEntry in synEntries:
+                    # Skip recurrent connections used in soft reset.
+                    if synEntry.synFmt.softReset:
+                        continue
                     # Get kernelIds and cxIds for non-zero kernelIds (to
                     # avoid that kernelId=0 fields overwrite others)
                     kIds = synEntry.kernelIds
@@ -461,7 +465,16 @@ def reconstructKMapFromPartitions(partitions, shape):
                     # Insert non-zero kernelIds
                     kMapInterleaved[cxIds, srcId] = kIds
         kMapCore = kMapInterleaved[partition.compartmentGroup.cxIds]
-        kMapFull[partition.compartmentGroup.relToAbsDestCxIdxMap] = kMapCore
+        idxs = partition.compartmentGroup.relToAbsDestCxIdxMap
+        # Todo: This clause for soft reset is incomplete and will fail in
+        #       certain corner cases with larger interleaved destination group
+        #       size. Need to ensure somehow that only "real" compartments are
+        #       used to reconstruct kernel map, i.e. remove reset cx.
+        if partition.resetMode == 'soft':
+            # Remove extra reset compartments
+            kMapCore = kMapCore[::2][:shape[0]]
+            idxs = idxs[::2][:shape[0]] // 2
+        kMapFull[idxs] = kMapCore
 
     return kMapFull
 
