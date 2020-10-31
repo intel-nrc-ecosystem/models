@@ -194,7 +194,7 @@ def _getPadding(inputShape, padding, kernelShape, strides, dilation,
         if qx % 1 and kx > 1:
             px1 += 1
     elif padding == 'causal':
-        py0 = dilation[0] * (kernelShape[0] - 1)
+        px0 = dilation[1] * (kernelShape[1] - 1)
     else:
         raise NotImplementedError
 
@@ -300,9 +300,9 @@ def _genKernelIdMap(inputShape, outputShape, padding, strides, kernelShape,
         inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1),
                       inputShape[2])
 
-    inputSize = np.asscalar(np.prod(inputShape))
-    outputSize = np.asscalar(np.prod(outputShape))
-    numStrides = np.asscalar(np.prod(outputShape[:-1]))
+    inputSize = np.prod(inputShape).item()
+    outputSize = np.prod(outputShape).item()
+    numStrides = np.prod(outputShape[:-1]).item()
     outIds = np.arange(numStrides)
     inputIdMap = np.reshape(np.arange(inputSize), inputShape, 'F')
     if isDepthwise:
@@ -328,7 +328,7 @@ def _genKernelIdMap(inputShape, outputShape, padding, strides, kernelShape,
 
     # Generate a flat dummy kernel. Need to offset by 1 because lil_matrix does
     # not store zeros.
-    kernelSize = np.asscalar(np.prod(kernelShape)) * inputChannels
+    kernelSize = np.prod(kernelShape).item() * inputChannels
     kIds = np.arange(kernelSize) + 1
 
     inputIds = []
@@ -421,7 +421,7 @@ def _getDestinationGroups(kMap, coreShape, inputShape, isDepthwise):
 
     sizeSrcGroup = inputShape[0]
     numChannels = inputShape[-1]
-    numSrcGroups = inputShape[1] if len(inputShape) == 3 else 1
+    numSrcGroups = inputShape[1]
 
     kMap = kMap.tocoo()
 

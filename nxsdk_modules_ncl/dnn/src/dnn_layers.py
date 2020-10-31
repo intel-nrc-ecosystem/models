@@ -306,7 +306,8 @@ def compileConvlike(self, partitionCandidate):
 
     Returns ``None`` if the partition candidate exceed some resource limit.
 
-    :param NxConv2D | NxDepthwiseConv2D | NxAveragePooling2D self: Nx layer.
+    :param NxConv2D | NxDepthwiseConv2D | NxAveragePooling2D | NxCvon1D self:
+        Nx layer.
     :param Layer partitionCandidate: The layer partition candidate.
 
     :return: ``partitionCandidate``.
@@ -316,7 +317,8 @@ def compileConvlike(self, partitionCandidate):
     # Input variables #
     ###################
 
-    inputShape = self.input_shape[1:]
+    input_shape = self._input_shape3D if hasattr(self, '_input_shape3D') else self.input_shape
+    inputShape = input_shape[1:]
 
     # When using signed spikes the number of channels in the input
     # is doubled.
@@ -338,7 +340,7 @@ def compileConvlike(self, partitionCandidate):
         inputShape = (inputShape[0] - (py0 + py1), inputShape[1] - (px0 + px1),
                       inputShape[2])
 
-    inputSize = np.asscalar(np.prod(inputShape))
+    inputSize = np.prod(inputShape).item()
     layerShape = partitionCandidate.coreIdMap.shape
 
     layerType = self.__class__.__name__
@@ -360,8 +362,8 @@ def compileConvlike(self, partitionCandidate):
     multiplicityFlat = np.tile(np.ravel(
         partitionCandidate.postLayer.multiplicityMap, 'F'), layerShape[-1])
 
-    # Todo : enable population mode in subtractive-reset. Currently only
-    # support for discrete axons.
+    # Todo: Enable population mode in subtractive-reset. Currently only
+    #       support for discrete axons.
     if self.resetMode == 'soft':
         preMultiplicityFlat = 2 * np.ones_like(preMultiplicityFlat)
         multiplicityFlat = 2 * np.ones_like(multiplicityFlat)
@@ -678,12 +680,12 @@ def compileConvlike(self, partitionCandidate):
             coreSizeInterleaved += mod
 
         biasesInterleaved = np.zeros(coreSizeInterleaved, int)
-        biaseExpInterleaved = np.zeros(coreSizeInterleaved, int)
+        biasExpInterleaved = np.zeros(coreSizeInterleaved, int)
         biasesInterleaved[permutedDestCxIdxs] = biasesOfCore
-        biaseExpInterleaved[permutedDestCxIdxs] = biasExpOfCore
+        biasExpInterleaved[permutedDestCxIdxs] = biasExpOfCore
 
         cxGroup = CompartmentGroup(permutedDestCxIdxs, biasesInterleaved,
-                                   biaseExpInterleaved, relToAbsDestCxIdxMap)
+                                   biasExpInterleaved, relToAbsDestCxIdxMap)
 
         partition.addCompartmentGroup(cxGroup)
 
@@ -1378,6 +1380,7 @@ class NxConv1D(NxLayer, Conv1D):
         self._strides2D = None
         self._kernel_shape2D = None
         self._dilation_rate2D = None
+        self._output_shape3D = None
 
     def get_config(self):
         config = {}
@@ -1389,61 +1392,21 @@ class NxConv1D(NxLayer, Conv1D):
 
     def build(self, input_shape):
         Conv1D.build(self, input_shape)
-
-        self._input_shape3D = (int(input_shape[1]), 1, int(input_shape[2]))
-        self._kernel_shape2D = (self.kernel_size[0], 1)
-        self._strides2D = (self.strides[0], 1)
-        self._dilation_rate2D = (self.dilation_rate[0], 1)
-        self._padding2D = _getPadding(self._input_shape3D, self.padding,
+        shape = list(input_shape)
+        shape.insert(1, 1)
+        self._input_shape3D = tuple(shape)
+        self._kernel_shape2D = (1, self.kernel_size[0])
+        self._strides2D = (1, self.strides[0])
+        self._dilation_rate2D = (1, self.dilation_rate[0])
+        self._padding2D = _getPadding(self._input_shape3D[1:], self.padding,
                                       self._kernel_shape2D, self._strides2D,
                                       self._dilation_rate2D)
 
-    def call(self, inputs):
-        # The only reason we need to override the call method is because the
-        # class name 'NxConv1D' would be falsely missed in the condition
-        # if self.padding == 'causal' and self.__class__.__name__ == 'Conv1D':
-        # below.
-        from tensorflow.python.ops import array_ops
-        from tensorflow.python.ops import nn
-        from tensorflow.python.ops import nn_ops
-
-        if self._recreate_conv_op(inputs):
-            self._convolution_op = nn_ops.Convolution(
-                inputs.get_shape(),
-                filter_shape=self.kernel.shape,
-                dilation_rate=self.dilation_rate,
-                strides=self.strides,
-                padding=self._padding_op,
-                data_format=self._conv_op_data_format)
-
-        # Apply causal padding to inputs for Conv1D.
-        if self.padding == 'causal' and 'Conv1D' in self.__class__.__name__:
-            inputs = array_ops.pad(inputs, self._compute_causal_padding())
-
-        outputs = self._convolution_op(inputs, self.kernel)
-
-        if self.use_bias:
-            if self.data_format == 'channels_first':
-                if self.rank == 1:
-                    # nn.bias_add does not accept a 1D input tensor.
-                    bias = array_ops.reshape(self.bias, (1, self.filters, 1))
-                    outputs += bias
-                else:
-                    outputs = nn.bias_add(outputs, self.bias,
-                                          data_format='NCHW')
-            else:
-                outputs = nn.bias_add(outputs, self.bias, data_format='NHWC')
-
-        if self.activation is not None:
-            return self.activation(outputs)
-        return outputs
-
     def genKernelIdMap(self):
-        output_shape3D = (self.output_shape[1], 1, self.output_shape[2])
-        return _genKernelIdMap(self._input_shape3D, output_shape3D,
+        return _genKernelIdMap(self._input_shape3D[1:],
+                               self._output_shape3D[1:],
                                self._padding2D, self._strides2D,
-                               self._kernel_shape2D,
-                               self._dilation_rate2D)
+                               self._kernel_shape2D, self._dilation_rate2D)
 
     def getMultiplicityMap(self, coreIdMap):
         """Generate multiplicity map.
@@ -1457,17 +1420,16 @@ class NxConv1D(NxLayer, Conv1D):
         :rtype: np.ndarray
         """
 
-        coreIdMap3D = np.expand_dims(coreIdMap, 1)
         multiplicityMap = _getMultiplicityMapConvlike(
-            coreIdMap3D, self._input_shape3D, self._kernel_shape2D,
+            coreIdMap, self._input_shape3D[1:], self._kernel_shape2D,
             self._strides2D, self._padding2D, self._dilation_rate2D)
 
         # If we partition a normal convolution layer along the channel
         # dimension, each input neuron has to be duplicated for every new core.
         # This is not necessary in a DepthwiseConv layer.
-        multiplicityMap *= len(set(coreIdMap[0, :]))
+        multiplicityMap *= len(set(coreIdMap[0, 0, :]))
 
-        return multiplicityMap[:, 0]
+        return multiplicityMap
 
     def getPartitionCandidates(self):
         """Get possible partition configurations for a layer.
@@ -1481,7 +1443,10 @@ class NxConv1D(NxLayer, Conv1D):
         :rtype: dict
         """
 
-        return getPartitionCandidates(self.output_shape[1:],
+        shape = list(self.output_shape)
+        shape.insert(1, 1)
+        self._output_shape3D = tuple(shape)
+        return getPartitionCandidates(self._output_shape3D[1:],
                                       self.maxNumCompartments)
 
     def compile(self, partitionCandidate):
@@ -2151,7 +2116,7 @@ class NxInputLayer(NxLayer, InputLayer):
         allowed = [i.name for i in InputModes] + [i.value for i in InputModes]
         assert inputMode in allowed, \
             "Input mode {} not implemented. Supported values: {}.".format(
-            inputMode, InputModes.__dict__['_member_names_'])
+                inputMode, InputModes.__dict__['_member_names_'])
 
         # Soft reset requires extra compartments, synapses, and axons for
         # recurrent connections. These need to be taken into account when
@@ -2181,7 +2146,7 @@ class NxInputLayer(NxLayer, InputLayer):
             if arg != target:
                 print("WARNING: NxInputLayer argument {}={} overwritten by {} "
                       "to meet requirement of inputMode={}.".format(
-                    label, arg, target, inputMode.name))
+                        label, arg, target, inputMode.name))
                 arg = target
             return arg
 
@@ -2801,6 +2766,9 @@ class NxReshape(NxLayer, Reshape):
 
 class NxModel(Model):
     """A DNN model class for Loihi."""
+
+    def call(self, inputs, training=None, mask=None):
+        super(NxModel, self).call(inputs, training, mask)
 
     def __init__(self, *args, **kwargs):
 

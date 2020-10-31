@@ -362,7 +362,10 @@ def tryCreatePartition(numCoresPerAxis, coreShape, postLayerPartition, layer,
     :return: Valid partition candidate.
     :rtype: Layer
     """
-    outputShape = layer.output_shape[1:]
+    # output_shape3D is used in Conv1D layers to fake Conv2D behavior.
+    output_shape = layer._output_shape3D if hasattr(layer, '_output_shape3D') \
+        else layer.output_shape
+    outputShape = output_shape[1:]
 
     # When using signed spikes the number of channels in the output
     # is doubled.
