@@ -666,8 +666,8 @@ class SNN(AbstractSNN):
             for i in neurons_to_probe:
                 # Shift id for multi-compartment neurons in soft-reset mode.
                 i *= neuron_size
+                i += offset
                 if self.do_probe_spikes:
-                    i += offset
                     p = layer[i].probe(probe_type, probeCondition=condition)
                     self.spike_probes[name].append(p)
                 if do_probe_v:
