@@ -21,16 +21,18 @@ from functools import partial
 from io import StringIO
 from test import support
 
-import keras.backend as k
 import matplotlib.pyplot as plt
 import numpy as np
-from keras import Input, Model
-from keras.layers import Flatten, Dense
+import tensorflow as tf
+from tensorflow.keras import Input, Model
+from tensorflow.keras.layers import Flatten, Dense
 
 from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxModel, ProbableStates, NxAveragePooling2D, NxDepthwiseConv2D, NxConv1D, \
     NxDense, NxFlatten
 from nxsdk_modules_ncl.dnn.src.utils import extract
+import os
+os.environ['SLURM'] = '1'
 
 
 class TestDnnCompiler(unittest.TestCase):
@@ -90,10 +92,10 @@ class TestDnnCompiler(unittest.TestCase):
         # Define probes to read out current and voltages
         vProbes1 = []
         uProbes2 = []
-        for i in range(int(np.asscalar(np.prod(inputShape)))):
+        for i in range(np.prod(inputShape).item()):
             vProbes1.append(
                 inputLayer[i].probe(state=ProbableStates.VOLTAGE))
-        for i in range(int(np.asscalar(np.prod(outputShape)))):
+        for i in range(np.prod(outputShape).item()):
             uProbes2.append(
                 outputLayer[i].probe(state=ProbableStates.CURRENT))
 
@@ -408,7 +410,7 @@ class TestDnnCompiler(unittest.TestCase):
             :return: Bias tensor.
             """
 
-            return k.constant(np.arange(biasScale), dtype, shape)
+            return tf.constant(np.arange(biasScale), dtype, shape)
 
         numFilters = 16
         kernelShape = (3, 3)
@@ -440,7 +442,7 @@ class TestDnnCompiler(unittest.TestCase):
         # Define probes to read out currents.
         vProbes = []
         sProbes = []
-        for i in range(int(np.asscalar(np.prod(outputShape)))):
+        for i in range(np.prod(outputShape).item()):
             vProbes.append(layer[i].probe(ProbableStates.VOLTAGE))
             sProbes.append(layer[i].probe(ProbableStates.ACTIVITY))
 
@@ -494,7 +496,7 @@ class TestDnnCompiler(unittest.TestCase):
         kernelShape = (3, 3, 1)
         kernelScale = 10
         # No need to divide by thrGain because spike input receives equal gain.
-        vThMant = int(np.asscalar(np.prod(kernelShape))) * kernelScale
+        vThMant = np.prod(kernelShape).item() * kernelScale
 
         kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
 
@@ -529,7 +531,7 @@ class TestDnnCompiler(unittest.TestCase):
         kernelScale = 10
 
         # No need to divide by thrGain because spike input receives equal gain.
-        vThMant = int(np.asscalar(np.prod(kernelShape))) * kernelScale
+        vThMant = np.prod(kernelShape).item() * kernelScale
 
         kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
         layer = NxDepthwiseConv2D(
@@ -622,7 +624,7 @@ class TestDnnCompiler(unittest.TestCase):
         kernelScale = 10
 
         # No need to divide by thrGain because spike input receives equal gain.
-        vThMant = int(np.asscalar(np.prod(kernelShape))) * kernelScale
+        vThMant = np.prod(kernelShape).item() * kernelScale
 
         kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
 
@@ -632,6 +634,167 @@ class TestDnnCompiler(unittest.TestCase):
                          activation='relu')
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_Conv1D_1(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses causal padding.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         padding='causal', activation='relu')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_Conv1D_2(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses causal padding and strides 2.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         strides=2, padding='causal', activation='relu')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_Conv1D_3(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses soft reset.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         activation='relu', resetMode='soft')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
+                                    visualizePartitions=False, plotUV=False)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_Conv1D_4(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        1D convolutions are faked by using Conv2D with single column.
+        """
+
+        inputShape = (1, 20, 3)
+        kernelShape = (1, 3)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv2D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         activation='relu', resetMode='soft')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
+                                    visualizePartitions=False, plotUV=False)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_Conv1D_5(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses soft reset and causal padding.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         padding='causal', activation='relu', resetMode='soft')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
+                                    visualizePartitions=False, plotUV=False)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_Conv1D_6(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses soft reset, causal padding, and strides 2.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=False,
+                         strides=2, padding='causal', activation='relu',
+                         resetMode='soft')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
+                                    visualizePartitions=False, plotUV=False)
 
         self.assertAlmostEqual(corr, 1, 2,
                                msg="Correlation between ANN activations "
@@ -656,7 +819,7 @@ class TestDnnCompiler(unittest.TestCase):
         kernelScale = 10
 
         # No need to divide by thrGain because spike input receives equal gain.
-        vThMant = int(np.asscalar(np.prod(kernelShape))) * kernelScale
+        vThMant = np.prod(kernelShape).item() * kernelScale
 
         kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
 
@@ -664,6 +827,60 @@ class TestDnnCompiler(unittest.TestCase):
                          kernel_initializer=kernel_init, probeSpikes=True,
                          bias_initializer='zeros', validatePartitions=True,
                          activation='relu', dilation_rate=2, padding='same')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_DilatedConv1D_1(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses soft reset.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         resetMode='soft', activation='relu', dilation_rate=2,
+                         padding='same')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assertAlmostEqual(corr, 1, 2,
+                               msg="Correlation between ANN activations "
+                                   "and SNN spikerates is too low.")
+
+    def test_DilatedConv1D_2(self):
+        """Test correlation between ANN activations and SNN spikerates.
+
+        Uses soft reset and causal padding.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         resetMode='soft', activation='relu', dilation_rate=2,
+                         padding='causal')
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
@@ -689,7 +906,7 @@ class TestDnnCompiler(unittest.TestCase):
         scale = 1
 
         # No need to divide by thrGain because spike input receives equal gain.
-        vThMant = int(np.asscalar(np.prod(poolShape))) * scale
+        vThMant = np.prod(poolShape).item() * scale
 
         layer = NxAveragePooling2D(pool_size=poolShape, vThMant=vThMant,
                                    validatePartitions=True, probeSpikes=True)
@@ -720,7 +937,7 @@ class TestDnnCompiler(unittest.TestCase):
         # Height, width, depth
         inputShape = (3, 4, 5)
 
-        numInputNeurons = int(np.asscalar(np.prod(inputShape)))
+        numInputNeurons = np.prod(inputShape).item()
         numOutputNeurons = numInputNeurons - 1
         inputScale = 255
 
@@ -1055,14 +1272,14 @@ def runModelFromConfig(argsInput, argsHidden, argsOutput, n=None):
 
     uProbes1 = []
     vProbes1 = []
-    for i in range(int(np.asscalar(np.prod(hiddenShape)))):
+    for i in range(np.prod(hiddenShape).item()):
         uProbes1.append(hiddenLayer[i].probe(u))
         if plotUV:
             vProbes1.append(hiddenLayer[i].probe(v))
 
     uProbes2 = []
     vProbes2 = []
-    for i in range(int(np.asscalar(np.prod(outputShape)))):
+    for i in range(np.prod(outputShape).item()):
         uProbes2.append(outputLayer[i].probe(u))
         if plotUV:
             vProbes2.append(outputLayer[i].probe(v))
@@ -1179,7 +1396,7 @@ def _data_to_img(data, shape):
 
 
 def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
-                         logger=None):
+                         logger=None, visualizePartitions=False, plotUV=False):
     """Run network to test correlation between ANN and SNN.
 
     :param NxLayer | Layer layer: NxLayer to test.
@@ -1188,6 +1405,8 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
         ``layer``.
     :param np.ndarray | tuple | list inputShape: Shape of input to the network.
     :param logging.Logger logger: Logger.
+    :param bool visualizePartitions: Whether to plot layer partition.
+    :param bool plotUV: Whether to plot neuron activity.
 
     :return: Pearson correlation coefficient of ANN activations and SNN rates.
     :rtype: float
@@ -1196,12 +1415,9 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     seed = 123
     np.random.seed(seed)
 
-    visualizePartitions = False
-    plotUV = False
-
     if inputShape is None:
         inputShape = (7, 7, 1)
-    numInputNeurons = int(np.asscalar(np.prod(inputShape)))
+    numInputNeurons = np.prod(inputShape).item()
     inputScale = numInputNeurons - 1
 
     thrToInputRatio = 2 ** 7
@@ -1214,8 +1430,9 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
 
     inputImage = np.random.randint(0, inputScale, inputShape)
 
-    inputLayer = NxInputLayer(batch_input_shape=(1,) + inputShape,
+    inputLayer = NxInputLayer(inputShape, batch_size=1,
                               vThMant=vThMantInput,
+                              # resetMode='soft',
                               visualizePartitions=visualizePartitions)
 
     out = layer(NxFlatten()(inputLayer.input)) \
@@ -1228,13 +1445,19 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     outputShape = layer.output_shape[1:]
 
     # Define probes to read out currents.
+    neuron_size = 2 if inputLayer.resetMode == 'soft' else 1
+    offset = 1 if inputLayer.resetMode == 'soft' else 0
     vProbes0 = []
     for i in range(numInputNeurons):
+        i = neuron_size * i + offset
         vProbes0.append(inputLayer[i].probe(ProbableStates.VOLTAGE))
 
+    neuron_size = 2 if layer.resetMode == 'soft' else 1
+    offset = 1 if layer.resetMode == 'soft' else 0
     vProbes = []
     sProbes = []
-    for i in range(int(np.asscalar(np.prod(outputShape)))):
+    for i in range(np.prod(outputShape).item()):
+        i = neuron_size * i + offset
         vProbes.append(layer[i].probe(ProbableStates.VOLTAGE))
         sProbes.append(layer[i].probe(ProbableStates.ACTIVITY))
 
@@ -1250,8 +1473,9 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     spikecount = _data_to_img(data // 127, outputShape)
     spikerates = spikecount / numSteps * thrToInputRatio
 
+    model_keras = Model(inputLayer.input, out)
     batchInputImage = np.expand_dims(inputImage, 0)
-    activations = model.predict(batchInputImage)[0] / (vThMant * thrGain)
+    activations = model_keras.predict(batchInputImage)[0] / (vThMant * thrGain)
 
     if plotUV:
         plt.figure(1)
@@ -1311,7 +1535,7 @@ def kernel_initializer(shape, dtype=None, kernelScale=1):
     # center weight distribution around 0, but that would lead to low rates and
     # we'd have to run for more timesteps to get good correlation.
     kernel = np.random.randint(-1, kernelScale, shape)
-    return k.constant(kernel, dtype)
+    return tf.constant(kernel, dtype)
 
 
 def main():

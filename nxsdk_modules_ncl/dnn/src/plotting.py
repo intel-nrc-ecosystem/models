@@ -193,7 +193,7 @@ def plot_core_utilization(layers, path):
     config entries.
 
     :param list[Layer] layers: List of partitioned layers.
-    :param str path: Where to load the data from.
+    :param str path: Where to write the output to.
     """
 
     compartments = []
@@ -262,6 +262,9 @@ def plot_core_utilization(layers, path):
     ax.xaxis.set_minor_locator(AutoMinorLocator(2))
     ax.grid(b=True, axis='x', which='minor')
     fig.savefig(os.path.join(path, 'core_utilization'), bbox_inches='tight')
+    np.savez_compressed(os.path.join(path, 'core_utilization'),
+                        cx=compartments, in_ax=input_axons,
+                        out_ax=output_axons, syn=synapses)
 
 
 def plot_multiplicity(m, path, name):
@@ -539,8 +542,12 @@ def plot_layer_partition(preLayer, path):
     if layer is None:
         return
 
-    inputSize = np.asscalar(np.prod(preLayer.coreIdMap.shape))
-    outputSize = np.asscalar(np.prod(layer.coreIdMap.shape))
+    inputSize = np.prod(preLayer.coreIdMap.shape).item()
+    outputSize = np.prod(layer.coreIdMap.shape).item()
+    if preLayer.partitions[0].resetMode == 'soft':
+        inputSize *= 2
+    if layer.partitions[0].resetMode == 'soft':
+        outputSize *= 2
 
     # Add a column for cxIds.
     numColsDestCxIds = 1
@@ -771,9 +778,12 @@ def drawDestCxIds0(ax, layer, outputSize, fontsize, markersize,
         # Undo interleaving.
         relToAbsDestCxIdxMap = partition.compartmentGroup.relToAbsDestCxIdxMap
 
-        cxIdsFull[relToAbsDestCxIdxMap] = cxIdsInterleaved[cxIds]
+        # Remove extra compartments from soft reset,
+        lim = outputSize if partition.resetMode == 'soft' else None
+        relToAbsDestCxIdxMap = relToAbsDestCxIdxMap[:lim]
+        cxIdsFull[relToAbsDestCxIdxMap] = cxIdsInterleaved[cxIds][:lim]
 
-        coreIdsFull[relToAbsDestCxIdxMap] = coreIdsInterleaved[cxIds]
+        coreIdsFull[relToAbsDestCxIdxMap] = coreIdsInterleaved[cxIds][:lim]
 
     # Draw colors.
     matrix = coreIdsFull
@@ -852,8 +862,8 @@ def drawDestCxIds2(ax, layer, fontsize, markersize, partitionColors, xShift):
     :param int xShift: Horizontal offset.
     """
 
-    outputSize = np.asscalar(
-        np.sum([partition.sizeInterleaved for partition in layer.partitions]))
+    outputSize = np.sum([partition.sizeInterleaved
+                         for partition in layer.partitions]).item()
 
     ax.clear()
     ax.axis('off')
@@ -905,12 +915,20 @@ def drawKernelIds10(ax, layer, inputSize, outputSize, fontsize, markersize):
         for inputAxonGroup in partition.inputAxonGroups:
             for relSrcId, srcId in enumerate(inputAxonGroup.srcNodeIds):
                 for synEntry in inputAxonGroup.synGroup.synEntries[relSrcId]:
+                    # Skip recurrent connections used in soft reset.
+                    if synEntry.synFmt.softReset:
+                        continue
                     destIds = inputAxonGroup.cxBase + synEntry.getCxIds()
                     kMapInterleaved[destIds, srcId] = synEntry.kernelIds
 
         # Undo interleaving.
         kMapCore = kMapInterleaved[partition.compartmentGroup.cxIds]
-        kMapFull[partition.compartmentGroup.relToAbsDestCxIdxMap] = kMapCore
+        idxs = partition.compartmentGroup.relToAbsDestCxIdxMap
+        # Remove extra compartments from soft reset,
+        if partition.resetMode == 'soft':
+            kMapCore = kMapCore[:outputSize]
+            idxs = idxs[:outputSize]
+        kMapFull[idxs] = kMapCore
 
     # Draw colors.
     matrix = kMapFull
@@ -954,6 +972,9 @@ def drawKernelIds2(ax, layer, inputSize, outputSize, fontsize, markersize):
         for inputAxonGroup in partition.inputAxonGroups:
             for relSrcId, srcId in enumerate(inputAxonGroup.srcNodeIds):
                 for synEntry in inputAxonGroup.synGroup.synEntries[relSrcId]:
+                    # Skip recurrent connections used in soft reset.
+                    if synEntry.synFmt.softReset:
+                        continue
                     destIds = inputAxonGroup.cxBase + synEntry.getCxIds()
                     kMapInterleaved[destIds, srcId] = synEntry.kernelIds
 
@@ -996,8 +1017,8 @@ def drawKernelIds11(ax, layer, inputSize, fontsize, markersize, linewidth,
     :param list partitionColors: Color scheme to distinguish partitions.
     """
 
-    outputSize = np.asscalar(
-        np.sum([partition.sizeInterleaved for partition in layer.partitions]))
+    outputSize = np.sum([partition.sizeInterleaved
+                         for partition in layer.partitions]).item()
 
     ax.clear()
     ax.axis('off')
@@ -1014,6 +1035,9 @@ def drawKernelIds11(ax, layer, inputSize, fontsize, markersize, linewidth,
             srcIds = inputAxonGroup.srcNodeIds
             for relSrcId, srcId in enumerate(srcIds):
                 for synEntry in inputAxonGroup.synGroup.synEntries[relSrcId]:
+                    # Skip recurrent connections used in soft reset.
+                    if synEntry.synFmt.softReset:
+                        continue
                     destIds = cxBase + synEntry.getCxIds()
                     kMapInterleaved[destIds, srcId] = synEntry.kernelIds
                     cIdxOffsets[destIds, srcId] = \
@@ -1067,8 +1091,8 @@ def drawKernelIds01(ax, layer, inputSize, fontsize, markersize, synGroupColors,
     :param list partitionColors: Color scheme to distinguish partitions.
     """
 
-    outputSize = np.asscalar(
-        np.sum([partition.sizeInterleaved for partition in layer.partitions]))
+    outputSize = np.sum([partition.sizeInterleaved
+                         for partition in layer.partitions]).item()
 
     ax.clear()
     ax.axis('off')
@@ -1087,6 +1111,9 @@ def drawKernelIds01(ax, layer, inputSize, fontsize, markersize, synGroupColors,
             cxBase = inputAxonGroup.cxBase
             for relSrcId, srcId in enumerate(srcIds):
                 for synEntry in inputAxonGroup.synGroup.synEntries[relSrcId]:
+                    # Skip recurrent connections used in soft reset.
+                    if synEntry.synFmt.softReset:
+                        continue
                     destIds = cxBase + synEntry.getCxIds()
                     kMapInterleaved[destIds, srcId] = synEntry.kernelIds
                     cIdxOffsets[destIds, srcId] = \
@@ -1155,20 +1182,27 @@ def drawKernelIds00(ax, layer, inputSize, outputSize, fontsize, markersize,
         for inputAxonGroup in partition.inputAxonGroups:
             for relSrcId, srcId in enumerate(inputAxonGroup.srcNodeIds):
                 for synEntry in inputAxonGroup.synGroup.synEntries[relSrcId]:
+                    # Skip recurrent connections used in soft reset.
+                    if synEntry.synFmt.softReset:
+                        continue
                     destIds = inputAxonGroup.cxBase + synEntry.getCxIds()
                     kMapInterleaved[destIds, srcId] = synEntry.kernelIds
                     synGroupIdsInterleaved[destIds, srcId] = \
                         inputAxonGroup.synGroup.id
 
+        # Remove extra compartments from soft reset,
+        lim = outputSize if partition.resetMode == 'soft' else None
+
         # Undo interleaving.
         permutedDestCxIdxs = partition.compartmentGroup.cxIds
         relToAbsDestCxIdxMap = partition.compartmentGroup.relToAbsDestCxIdxMap
+        relToAbsDestCxIdxMap = relToAbsDestCxIdxMap[:lim]
 
         kMapCore = kMapInterleaved[permutedDestCxIdxs]
-        kMapFull[relToAbsDestCxIdxMap] = kMapCore
+        kMapFull[relToAbsDestCxIdxMap] = kMapCore[:lim]
 
         synGroupIdsCore = synGroupIdsInterleaved[permutedDestCxIdxs]
-        synGroupIdsFull[relToAbsDestCxIdxMap] = synGroupIdsCore
+        synGroupIdsFull[relToAbsDestCxIdxMap] = synGroupIdsCore[:lim]
 
     # Draw colors.
     y, x = np.nonzero(synGroupIdsFull >= 0)

@@ -66,6 +66,7 @@ class SpikeInputGenerator(AbstractComposable):
         """
 
         super().__init__()
+        self.name = name
         self.packetSize = packetSize
         self.numLmts = numSnipsPerChip
         self.queueSize = queueSize

@@ -135,13 +135,26 @@ class Layer:
             "Layer must be mapped before InputAxonResourceMap can be " \
             "generated."
 
-        resourceMap = []
+        # Initialize cxResourceMap
+        numCx = 0
         for p in self.partitions:
-            for axonGroup in p.inputAxonGroups:
-                for axonId in axonGroup.srcNodeIds:
-                    resourceMap.append([p.chipId, p.coreId, axonId])
+            numCx += p.compartmentGroup.numCompartments
 
-        return np.array(resourceMap, int)
+        cxResourceMap = np.zeros((numCx, 3), int)
+
+        # Populate cxResourceMap
+        for p in self.partitions:
+            # Get global layer-wide compartment ids
+            cxGrp = p.compartmentGroup
+            globalCxIds = cxGrp.relToAbsDestCxIdxMap
+            axonIds = np.concatenate([axonGroup.srcNodeIds for axonGroup
+                                      in p.inputAxonGroups])
+
+            cxResourceMap[globalCxIds, 0] = p.chipId
+            cxResourceMap[globalCxIds, 1] = p.coreId
+            cxResourceMap[globalCxIds, 2] = axonIds
+
+        return cxResourceMap
 
     def addPartition(self, partition):
         """Add partition to layer, and update cost properties.

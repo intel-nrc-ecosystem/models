@@ -17,6 +17,8 @@
 from __future__ import division, absolute_import
 from __future__ import print_function, unicode_literals
 
+from collections import OrderedDict
+
 import sys
 
 import json
@@ -36,6 +38,8 @@ from nxsdk.graph.monitor.probes import IntervalProbeCondition, \
 from nxsdk.composable.model import Model as ComposableModel
 from nxsdk_modules_ncl.input_generator.input_generator import InputGenerator
 from nxsdk_modules_ncl.dnn.composable.composable_dnn import ComposableDNN
+from nxsdk_modules_ncl.input_generator.spike_input_generator import \
+    SpikeInputGenerator
 
 from snntoolbox.parsing.utils import get_type
 from snntoolbox.conversion.utils import get_scale_fac
@@ -142,6 +146,7 @@ class SNN(AbstractSNN):
 
         self.signed_input = self.config.getboolean('loihi', 'signed_input',
                                                    fallback=False)
+        self._num_samples_seen = 0
 
     @property
     def is_parallelizable(self):
@@ -256,12 +261,14 @@ class SNN(AbstractSNN):
             raise NotImplementedError
         elif self._is_aedat_input:
             input_mode = nxtf.InputModes.AEDAT
+            reset_mode = 'hard'  # SpikeInputGen currently only supports 'hard'
         else:
             input_mode = nxtf.InputModes.BIAS
+            reset_mode = self.reset_mode
 
         name = self.parsed_model.layers[0].name
         layer_kwargs = {'signed': self.signed_input,
-                        'resetMode': self.reset_mode,
+                        'resetMode': reset_mode,
                         'inputMode': input_mode,
                         'name': name}
         compartment_kwargs = eval(self.config.get('loihi',
@@ -494,6 +501,15 @@ class SNN(AbstractSNN):
             for _ in range(self._duration):
                 x_b_l.append(dvs_gen.next_eventframe_batch())
             x_b_l = np.stack(x_b_l, 1)
+            axes = list(np.arange(x_b_l.ndim))
+            axes.remove(1)
+            num_empty_frames = self._duration - np.count_nonzero(
+                np.count_nonzero(x_b_l, tuple(axes)))
+            if num_empty_frames:
+                print("{} of {} eventframes were empty. Consider decreasing "
+                      "the simulation duration, or increasing the eventframe "
+                      "width or the number of events per sample.".format(
+                        num_empty_frames, self._duration))
             remaining_events = dvs_gen.remaining_events_of_current_batch()
             if remaining_events:
                 print("{} events were not processed. Consider increasing the "
@@ -579,8 +595,10 @@ class SNN(AbstractSNN):
         """Set variables to record during simulation."""
 
         if self.profile_performance:
+            # Warmup phase skipped
+            t_start = self._buffer_size * self._bin_size + 1
             condition = PerformanceProbeCondition(
-                tStart=1, tEnd=self.num_samples * self._duration,
+                tStart=t_start, tEnd=self.num_samples * self._duration,
                 bufferSize=self._buffer_size, binSize=self._bin_size)
             self._performance_probe = self.snn.board.probe(
                 ProbeParameter.ENERGY, condition)
@@ -648,8 +666,8 @@ class SNN(AbstractSNN):
             for i in neurons_to_probe:
                 # Shift id for multi-compartment neurons in soft-reset mode.
                 i *= neuron_size
+                i += offset
                 if self.do_probe_spikes:
-                    i += offset
                     p = layer[i].probe(probe_type, probeCondition=condition)
                     self.spike_probes[name].append(p)
                 if do_probe_v:
@@ -870,23 +888,42 @@ class SNN(AbstractSNN):
 
         print("Setting inputs...", flush=True)
 
-        # Normalize inputs and scale up to 8 bit.
-        inputs = (inputs / np.max(inputs) * (2 ** 8 - 1)).astype(int)
-
-        def f(z):
-            self.composed_snn.composables.input.encode(np.expand_dims(z, 0))
-
-        for x in inputs:
-            if self._is_aedat_input:
-                # Input x consists of num_timesteps "event-frames". Send them
-                # in sequentially.
-                for x_t in x:
-                    f(x_t)
-            else:
-                # Input x consists of a single image frame, which is sent in
-                # only once.
-                f(x)
+        gen = self.composed_snn.composables.input
+        if self._is_aedat_input:
+            inputs_encoded = self.prepare_dvs_input_batch(inputs)
+            gen.send_inputs(inputs_encoded)
+        else:
+            # Normalize inputs and scale up to 8 bit.
+            inputs = (inputs / np.max(inputs) * (2 ** 8 - 1)).astype(int)
+            for x in inputs:
+                gen.encode(np.expand_dims(x, 0))
         print("Done setting inputs.", flush=True)
+
+    def prepare_dvs_input_batch(self, inputs):
+        """
+        In principle, we could just call the encode method of the
+        SpikeInputGenerator on the whole batch, but we choose to encode the
+        samples individually here because if the batch size is large, the
+        sorting functions within the encoder may take very long.
+        """
+        height, width, depth = self.snn.input_shape[1:]
+
+        inputs_encoded = OrderedDict()
+        for eventframe in inputs:
+            if len(eventframe.shape) < 4:
+                np.expand_dims(eventframe, -1)
+            t, y, x, p = np.nonzero(eventframe)
+            ts = t + self._num_samples_seen * self._duration + 1
+            addr = x * height * depth + y * depth + p
+            self._num_samples_seen += 1
+            inp_encoded = self.composed_snn.composables.input.prepare_encoding(
+                np.column_stack([addr, ts]))
+            for chip_id, inputs_per_chip in inp_encoded.items():
+                inputs_encoded.setdefault(chip_id, OrderedDict())
+                for cpu_id, inputs_per_cpu in inputs_per_chip.items():
+                    inputs_encoded[chip_id].setdefault(cpu_id, [])
+                    inputs_encoded[chip_id][cpu_id].extend(inputs_per_cpu)
+        return inputs_encoded
 
     def preprocessing(self, **kwargs):
         """Do any preprocessing."""
@@ -1072,15 +1109,16 @@ class SNN(AbstractSNN):
 
         # Configure input generator to stream images via channels from super
         # host to Loihi. Use batch size 1 regardless of actual batch size.
-        shape = (1,) + tuple(self.snn.input_shape[1:])
-        # When using aedat (DVS) input, the InputGenerator processes one event
-        # frame each time step. Otherwise, a dense frame is processed for
-        # self._duration timesteps.
-        input_interval = 1 if self._is_aedat_input else interval
-        input_generator = InputGenerator(shape, interval=input_interval,
-                                         numSnipsPerChip=3)
-        input_generator.name = 'input'
-        input_generator.setBiasExp(6)
+        if self._is_aedat_input:
+            input_generator = SpikeInputGenerator(
+                name='input', packetSize=256, numSnipsPerChip=3,
+                queueSize=512)
+        else:
+            shape = (1,) + tuple(self.snn.input_shape[1:])
+            input_generator = InputGenerator(shape, interval=interval,
+                                             numSnipsPerChip=3)
+            input_generator.name = 'input'
+            input_generator.setBiasExp(6)
 
         # Add all components to parent model and connect input generator to
         # SNN.
@@ -1345,7 +1383,6 @@ def print_performance(stats, num_timesteps):
     lakemont_dynamic = stats['power']['lakemont']['dynamic']
     core_static = stats['power']['core']['static']
     core_dynamic = stats['power']['core']['dynamic']
-    total = stats['power']['total']
     print("Static power (x86): {} mW".format(lakemont_static))
     print("Dynamic power (x86): {} mW".format(lakemont_dynamic))
     print("Total power (x86): {} mW".format(lakemont_static +
@@ -1356,9 +1393,10 @@ def print_performance(stats, num_timesteps):
                                                     core_dynamic))
     print("Static power (system): {} mW".format(stats['power']['static']))
     print("Dynamic power (system): {} mW".format(stats['power']['dynamic']))
-    print("Total power (system): {} mW".format(total))
+    print("Total power (system): {} mW".format(stats['power']['total']))
     time_per_sample = stats.timePerTimestep * num_timesteps / 1e3
-    energy_per_sample = total * time_per_sample / 1e3  # mJ
+    power = lakemont_static + lakemont_dynamic + core_static + core_dynamic
+    energy_per_sample = power * time_per_sample / 1e3  # mJ
     print("Timesteps per inference: {}".format(num_timesteps))
     print("Energy per inference: {} mJ".format(energy_per_sample))
     print("Execution time per inference: {} ms".format(time_per_sample))
