@@ -317,7 +317,8 @@ def compileConvlike(self, partitionCandidate):
     # Input variables #
     ###################
 
-    input_shape = self._input_shape3D if hasattr(self, '_input_shape3D') else self.input_shape
+    input_shape = self._input_shape3D if hasattr(self, '_input_shape3D') else \
+        self.input_shape
     inputShape = input_shape[1:]
 
     # When using signed spikes the number of channels in the input
