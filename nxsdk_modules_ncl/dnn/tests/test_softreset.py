@@ -1,19 +1,13 @@
 import unittest
 from test import support
 
-import os
-import time
-
 import numpy as np
 from matplotlib import pyplot as plt
 
-import keras
-from keras.datasets import cifar10
-
-from nxsdk_modules_ncl.dnn.tests.test_dnn_compiler import extract, kernel_initializer, \
-    _data_to_img, _plot_stimulus_response, normalize_image_dims
+# from nxsdk_modules_ncl.dnn.tests.test_dnn_compiler import extract, \
+#     kernel_initializer, _data_to_img, normalize_image_dims
 from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
-    NxModel, ProbableStates, NxFlatten, NxDense, NxLayer
+    NxModel, ProbableStates, NxLayer
 from functools import partial
 
 
