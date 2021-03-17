@@ -15,3 +15,19 @@ For community support, Q&A and other information, please visit: http://neuromorp
 * Pelenet : Carlo Michaelis, University of Goettingen (https://github.com/sagacitysite/pelenet)
   * Connection matrix and Connection asymmetry landscape Python packages in ``lib/anisotropic`` were contributed by Sebastian Spreizer (https://github.com/babsey/spatio-temporal-activity-sequence/tree/6d4ab597c98c01a2a9aa037834a0115faee62587)
 
+* PCritical : Ismael Balafrej, prof. Jean Rouat. University of Sherbrooke. [NEuro COmputational & Intelligent Signal Processing Research Group (NECOTIS)](http://www.gel.usherbrooke.ca/necotis/)
+
+* Temporal Diff Enc: 
+  * This is a Loihi implementation of the spiking elementary motion detector (sEMD)/ temporal difference encoder (sTDE). It converts a temporal difference between 2 spikes from different sources into a firing rate/ number of spikes.
+  * The sEMD has been introduced and used by:
+    - Milde, M. B., Bertrand, O. J., Ramachandran, H., Egelhaaf, M., & Chicca, E. (2018). Spiking elementary motion detector in neuromorphic systems. Neural computation, 30(9), 2384-2417.
+    - D'Angelo, G., Janotte, E., Schoepe, T., O'Keeffe, J., Milde, M. B., Chicca, E., & Bartolozzi, C. (2020). Event-based eccentric motion detection exploiting time difference encoding. Frontiers in Neuroscience, 14, 451.
+  * This file was mainly written at the Telluride Neuromorphic Workshop 2019 by 
+    - Alpha Renner (alpren@ini.uzh.ch)
+  * Contributors:
+    - Elisabetta Chicca
+    - Garrick Orchard
+    - Andreas Wild
+    - Mike Davies
+  * Version 1.3
+Updated for nxsdk version 0.9.5

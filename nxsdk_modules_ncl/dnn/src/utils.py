@@ -194,7 +194,7 @@ def _getPadding(inputShape, padding, kernelShape, strides, dilation,
         if qx % 1 and kx > 1:
             px1 += 1
     elif padding == 'causal':
-        py0 = dilation[0] * (kernelShape[0] - 1)
+        px0 = dilation[1] * (kernelShape[1] - 1)
     else:
         raise NotImplementedError
 
