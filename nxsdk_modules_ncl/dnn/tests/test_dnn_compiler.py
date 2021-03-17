@@ -869,8 +869,6 @@ class TestDnnCompiler(unittest.TestCase):
 
         self.assert_correlation(corr)
 
-    # Todo: Fails because of padding ('same'). The neuron spikerates are
-    #       shifted by 1 neuron compared to the ANN.
     def test_DilatedConv1D_3(self):
         """Test correlation between ANN activations and SNN spikerates.
         """
@@ -1445,7 +1443,7 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     numInputNeurons = np.prod(inputShape).item()
     inputScale = numInputNeurons - 1
 
-    thrToInputRatio = 2 ** 7
+    thrToInputRatio = 2 ** 3
     thrGain = 2 ** 0
 
     vThMantInput = thrToInputRatio * inputScale // thrGain
@@ -1457,12 +1455,14 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     if random:
         inputImage = np.random.randint(0, inputScale, inputShape)
     else:
-        inputImage = np.reshape(np.arange(inputScale + 1), inputShape)
+        inputImage = np.reshape(np.arange(numInputNeurons), inputShape)
         # inputImage = np.ones(inputShape, int)
+
+    resetMode = layer.resetMode
 
     inputLayer = NxInputLayer(inputShape, batch_size=1,
                               vThMant=vThMantInput,
-                              # resetMode='soft',
+                              resetMode=resetMode,
                               visualizePartitions=visualizePartitions)
 
     out = layer(NxFlatten()(inputLayer.input)) \
@@ -1474,21 +1474,20 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
 
     printLayerInformation = False
     if printLayerInformation:
-        printLayerMappings(model.layers, mapper, synapses=True, inputAxons=True)
+        printLayerMappings(model.layers, mapper, synapses=True,
+                           inputAxons=True)
         printLayers(model.layers)
 
     outputShape = layer.output_shape[1:]
 
     # Define probes to read out currents.
-    neuron_size = 2 if inputLayer.resetMode == 'soft' else 1
-    offset = 1 if inputLayer.resetMode == 'soft' else 0
+    neuron_size = 2 if resetMode == 'soft' else 1
+    offset = 1 if resetMode == 'soft' else 0
     vProbes0 = []
     for i in range(numInputNeurons):
         i = neuron_size * i + offset
         vProbes0.append(inputLayer[i].probe(ProbableStates.VOLTAGE))
 
-    neuron_size = 2 if layer.resetMode == 'soft' else 1
-    offset = 1 if layer.resetMode == 'soft' else 0
     vProbes = []
     sProbes = []
     for i in range(np.prod(outputShape).item()):
@@ -1498,6 +1497,7 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
 
     # Set bias currents
     for i, b in enumerate(np.ravel(inputImage, 'F')):
+        i *= neuron_size
         inputLayer[i].biasMant = b
         inputLayer[i].phase = 2
 
