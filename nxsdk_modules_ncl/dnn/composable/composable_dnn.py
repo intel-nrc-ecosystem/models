@@ -33,6 +33,8 @@ from nxsdk.graph.graph import Graph
 from nxsdk.graph.monitor.probes import SpikeProbeCondition
 from nxsdk.graph.processes.phase_enums import Phase
 from nxsdk_modules_ncl.dnn.src.dnn_layers import ProbableStates, InputModes
+from nxsdk_modules_ncl.dnn.tests.test_softreset import printLayerMappings, \
+    printLayers
 
 
 class ComposableDNN(AbstractComposable):
@@ -114,7 +116,13 @@ class ComposableDNN(AbstractComposable):
 
     def map(self, board: Graph) -> AbstractComposable:
         """Invoke partition and mapping of the dnn model"""
-        self._dnn.compileModel(board)
+        mapper = self._dnn.compileModel(board)
+
+        printLayerInfo = False
+        if printLayerInfo:
+            printLayerMappings(self._dnn.layers, mapper, synapses=True, inputAxons=True)
+            printLayers(self._dnn.layers)
+
         self._createSnips(board)
         self._createReadoutSnip()
         return self

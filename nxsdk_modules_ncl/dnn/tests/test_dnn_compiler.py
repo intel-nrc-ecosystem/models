@@ -1465,7 +1465,12 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
 
     model = NxModel(inputLayer.input, out, logger=logger)
 
-    model.compileModel()
+    mapper = model.compileModel()
+
+    printLayerInformation = False
+    if printLayerInformation:
+        printLayerMappings(model.layers, mapper, synapses=True, inputAxons=True)
+        printLayers(model.layers)
 
     outputShape = layer.output_shape[1:]
 
