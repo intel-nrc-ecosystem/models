@@ -1453,7 +1453,12 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     maxNumSpikes = 100
     numSteps = thrToInputRatio * maxNumSpikes
 
-    inputImage = np.random.randint(0, inputScale, inputShape)
+    random = True
+    if random:
+        inputImage = np.random.randint(0, inputScale, inputShape)
+    else:
+        inputImage = np.reshape(np.arange(inputScale + 1), inputShape)
+        # inputImage = np.ones(inputShape, int)
 
     inputLayer = NxInputLayer(inputShape, batch_size=1,
                               vThMant=vThMantInput,
@@ -1551,12 +1556,14 @@ def normalize_image_dims(image):
     return image
 
 
-def kernel_initializer(shape, dtype=None, kernelScale=1):
+def kernel_initializer(shape, dtype=None, kernelScale=1, random=True):
     """Random integer kernel initializer for Keras layer.
 
     :param list | tuple | np.ndarray shape: Shape of kernel.
     :param str | type | None dtype: Data type of kernel.
     :param int kernelScale: Scale factor applied to the kernel.
+    :param bool random: If false, kernel will be linearly increasing list of
+    integers, and random integers otherwise.
 
     :return: Kernel tensor.
     """
@@ -1564,7 +1571,11 @@ def kernel_initializer(shape, dtype=None, kernelScale=1):
     # Start with a small negative weight so we test using both signs. Could
     # center weight distribution around 0, but that would lead to low rates and
     # we'd have to run for more timesteps to get good correlation.
-    kernel = np.random.randint(-1, kernelScale, shape)
+    if random:
+        kernel = np.random.randint(-1, kernelScale, shape)
+    else:
+        kernel = np.reshape(1 + np.arange(int(np.prod(shape))), shape) * \
+            kernelScale
     return tf.constant(kernel, dtype)
 
 
