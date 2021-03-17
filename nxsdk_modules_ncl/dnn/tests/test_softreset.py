@@ -277,6 +277,9 @@ def printLayerMappings(layers, mapper, compartments=True,
     """
     assert len(layers) > 0
     for layer in layers:
+        # Skip virtual layers like Flatten.
+        if layer._cxResourceMap is None:
+            continue
         cores = np.unique(layer._cxResourceMap[:, 1])
         for coreId in cores:
             n2Core = layer._board.n2Chips[0].coreMap[coreId]
@@ -294,6 +297,9 @@ def printLayers(layers):
 def printLayer(layer):
     """ Helper function to print core attributes from cores associated with layer. """
     print(layer.name)
+    # Skip virtual layers like Flatten.
+    if layer._cxResourceMap is None:
+        return
     coreIds = np.unique(layer._cxResourceMap[:, 1])
     for coreId in coreIds:
         printCore(layer._board.n2Chips[0].coreMap[coreId])
