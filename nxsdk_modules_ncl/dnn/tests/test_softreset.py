@@ -1,19 +1,13 @@
 import unittest
 from test import support
 
-import os
-import time
-
 import numpy as np
 from matplotlib import pyplot as plt
 
-import keras
-from keras.datasets import cifar10
-
-from nxsdk_modules_ncl.dnn.tests.test_dnn_compiler import extract, kernel_initializer, \
-    _data_to_img, _plot_stimulus_response, normalize_image_dims
+# from nxsdk_modules_ncl.dnn.tests.test_dnn_compiler import extract, \
+#     kernel_initializer, _data_to_img, normalize_image_dims
 from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
-    NxModel, ProbableStates, NxFlatten, NxDense, NxLayer
+    NxModel, ProbableStates, NxLayer
 from functools import partial
 
 
@@ -283,6 +277,9 @@ def printLayerMappings(layers, mapper, compartments=True,
     """
     assert len(layers) > 0
     for layer in layers:
+        # Skip virtual layers like Flatten.
+        if layer._cxResourceMap is None:
+            continue
         cores = np.unique(layer._cxResourceMap[:, 1])
         for coreId in cores:
             n2Core = layer._board.n2Chips[0].coreMap[coreId]
@@ -300,6 +297,9 @@ def printLayers(layers):
 def printLayer(layer):
     """ Helper function to print core attributes from cores associated with layer. """
     print(layer.name)
+    # Skip virtual layers like Flatten.
+    if layer._cxResourceMap is None:
+        return
     coreIds = np.unique(layer._cxResourceMap[:, 1])
     for coreId in coreIds:
         printCore(layer._board.n2Chips[0].coreMap[coreId])

@@ -317,7 +317,8 @@ def compileConvlike(self, partitionCandidate):
     # Input variables #
     ###################
 
-    input_shape = self._input_shape3D if hasattr(self, '_input_shape3D') else self.input_shape
+    input_shape = self._input_shape3D if hasattr(self, '_input_shape3D') else \
+        self.input_shape
     inputShape = input_shape[1:]
 
     # When using signed spikes the number of channels in the input
@@ -1393,11 +1394,11 @@ class NxConv1D(NxLayer, Conv1D):
     def build(self, input_shape):
         Conv1D.build(self, input_shape)
         shape = list(input_shape)
-        shape.insert(1, 1)
+        shape.insert(2, 1)
         self._input_shape3D = tuple(shape)
-        self._kernel_shape2D = (1, self.kernel_size[0])
-        self._strides2D = (1, self.strides[0])
-        self._dilation_rate2D = (1, self.dilation_rate[0])
+        self._kernel_shape2D = (self.kernel_size[0], 1)
+        self._strides2D = (self.strides[0], 1)
+        self._dilation_rate2D = (self.dilation_rate[0], 1)
         self._padding2D = _getPadding(self._input_shape3D[1:], self.padding,
                                       self._kernel_shape2D, self._strides2D,
                                       self._dilation_rate2D)
@@ -1444,7 +1445,7 @@ class NxConv1D(NxLayer, Conv1D):
         """
 
         shape = list(self.output_shape)
-        shape.insert(1, 1)
+        shape.insert(2, 1)
         self._output_shape3D = tuple(shape)
         return getPartitionCandidates(self._output_shape3D[1:],
                                       self.maxNumCompartments)

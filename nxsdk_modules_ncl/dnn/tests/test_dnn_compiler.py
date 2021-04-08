@@ -32,6 +32,10 @@ from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxDense, NxFlatten
 from nxsdk_modules_ncl.dnn.src.utils import extract
 import os
+
+from nxsdk_modules_ncl.dnn.tests.test_softreset import printLayerMappings, \
+    printLayers
+
 os.environ['SLURM'] = '1'
 
 
@@ -54,6 +58,11 @@ class TestDnnCompiler(unittest.TestCase):
 
         self.handler.close()
         self.logger.removeHandler(self.handler)
+
+    def assert_correlation(self, corr, thresh=0.9):
+        self.assertGreater(corr, thresh,
+                           msg="Correlation between ANN activations and SNN "
+                               "spikerates is too low.")
 
     @staticmethod
     def _setup_2layer_stimulus_net(inputImage, vTh, padding='same',
@@ -454,7 +463,9 @@ class TestDnnCompiler(unittest.TestCase):
         spikerates = spikecount / numSteps
 
         batchInputImage = np.expand_dims(np.zeros(inputShape), 0)
-        activations = model.predict(batchInputImage)[0] / (vThMant * thrGain)
+        model_keras = Model(inputLayer.input, layer(inputLayer.input))
+        activations = \
+            model_keras.predict(batchInputImage)[0] / (vThMant * thrGain)
 
         if plotUV:
             plt.figure(1)
@@ -475,9 +486,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = np.corrcoef(np.ravel(spikerates), np.ravel(activations))[0, 1]
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv2D(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -508,9 +517,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_DepthwiseConv2D(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -541,9 +548,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Dense(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -571,9 +576,7 @@ class TestDnnCompiler(unittest.TestCase):
         corr = runCorrelationRandom(layer, vThMant, inputShape=(49,),
                                     insertFlatten=False)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Dense2(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -601,9 +604,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, insertFlatten=True)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -635,9 +636,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D_1(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -661,9 +660,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D_2(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -687,9 +684,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D_3(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -714,9 +709,7 @@ class TestDnnCompiler(unittest.TestCase):
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
                                     visualizePartitions=False, plotUV=False)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D_4(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -741,9 +734,7 @@ class TestDnnCompiler(unittest.TestCase):
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
                                     visualizePartitions=False, plotUV=False)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D_5(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -768,9 +759,7 @@ class TestDnnCompiler(unittest.TestCase):
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
                                     visualizePartitions=False, plotUV=False)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Conv1D_6(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -796,9 +785,7 @@ class TestDnnCompiler(unittest.TestCase):
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape,
                                     visualizePartitions=False, plotUV=False)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_DilatedConv1D(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -830,9 +817,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_DilatedConv1D_1(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -857,9 +842,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_DilatedConv1D_2(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -884,9 +867,51 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
+
+    def test_DilatedConv1D_3(self):
+        """Test correlation between ANN activations and SNN spikerates.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         activation='relu', dilation_rate=3, padding='same')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assert_correlation(corr)
+
+    def test_DilatedConv1D_4(self):
+        """Test correlation between ANN activations and SNN spikerates.
+        """
+
+        inputShape = (20, 3)
+        kernelShape = (3,)
+        kernelScale = 10
+
+        # No need to divide by thrGain because spike input receives equal gain.
+        vThMant = np.prod(kernelShape).item() * kernelScale
+
+        kernel_init = partial(kernel_initializer, kernelScale=kernelScale)
+
+        layer = NxConv1D(2, kernel_size=kernelShape, vThMant=vThMant,
+                         kernel_initializer=kernel_init, probeSpikes=True,
+                         bias_initializer='zeros', validatePartitions=True,
+                         activation='relu', dilation_rate=3, padding='valid')
+
+        corr = runCorrelationRandom(layer, vThMant, inputShape=inputShape)
+
+        self.assert_correlation(corr)
 
     def test_AveragePooling2D(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -913,9 +938,7 @@ class TestDnnCompiler(unittest.TestCase):
 
         corr = runCorrelationRandom(layer, vThMant)
 
-        self.assertAlmostEqual(corr, 1, 2,
-                               msg="Correlation between ANN activations "
-                                   "and SNN spikerates is too low.")
+        self.assert_correlation(corr)
 
     def test_Flatten(self):
         """Test correlation between ANN activations and SNN spikerates.
@@ -1420,7 +1443,7 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     numInputNeurons = np.prod(inputShape).item()
     inputScale = numInputNeurons - 1
 
-    thrToInputRatio = 2 ** 7
+    thrToInputRatio = 2 ** 3
     thrGain = 2 ** 0
 
     vThMantInput = thrToInputRatio * inputScale // thrGain
@@ -1428,11 +1451,18 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
     maxNumSpikes = 100
     numSteps = thrToInputRatio * maxNumSpikes
 
-    inputImage = np.random.randint(0, inputScale, inputShape)
+    random = True
+    if random:
+        inputImage = np.random.randint(0, inputScale, inputShape)
+    else:
+        inputImage = np.reshape(np.arange(numInputNeurons), inputShape)
+        # inputImage = np.ones(inputShape, int)
+
+    resetMode = layer.resetMode
 
     inputLayer = NxInputLayer(inputShape, batch_size=1,
                               vThMant=vThMantInput,
-                              # resetMode='soft',
+                              resetMode=resetMode,
                               visualizePartitions=visualizePartitions)
 
     out = layer(NxFlatten()(inputLayer.input)) \
@@ -1440,20 +1470,24 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
 
     model = NxModel(inputLayer.input, out, logger=logger)
 
-    model.compileModel()
+    mapper = model.compileModel()
+
+    printLayerInformation = False
+    if printLayerInformation:
+        printLayerMappings(model.layers, mapper, synapses=True,
+                           inputAxons=True)
+        printLayers(model.layers)
 
     outputShape = layer.output_shape[1:]
 
     # Define probes to read out currents.
-    neuron_size = 2 if inputLayer.resetMode == 'soft' else 1
-    offset = 1 if inputLayer.resetMode == 'soft' else 0
+    neuron_size = 2 if resetMode == 'soft' else 1
+    offset = 1 if resetMode == 'soft' else 0
     vProbes0 = []
     for i in range(numInputNeurons):
         i = neuron_size * i + offset
         vProbes0.append(inputLayer[i].probe(ProbableStates.VOLTAGE))
 
-    neuron_size = 2 if layer.resetMode == 'soft' else 1
-    offset = 1 if layer.resetMode == 'soft' else 0
     vProbes = []
     sProbes = []
     for i in range(np.prod(outputShape).item()):
@@ -1463,6 +1497,7 @@ def runCorrelationRandom(layer, vThMant, insertFlatten=False, inputShape=None,
 
     # Set bias currents
     for i, b in enumerate(np.ravel(inputImage, 'F')):
+        i *= neuron_size
         inputLayer[i].biasMant = b
         inputLayer[i].phase = 2
 
@@ -1521,12 +1556,14 @@ def normalize_image_dims(image):
     return image
 
 
-def kernel_initializer(shape, dtype=None, kernelScale=1):
+def kernel_initializer(shape, dtype=None, kernelScale=1, random=True):
     """Random integer kernel initializer for Keras layer.
 
     :param list | tuple | np.ndarray shape: Shape of kernel.
     :param str | type | None dtype: Data type of kernel.
     :param int kernelScale: Scale factor applied to the kernel.
+    :param bool random: If false, kernel will be linearly increasing list of
+    integers, and random integers otherwise.
 
     :return: Kernel tensor.
     """
@@ -1534,7 +1571,11 @@ def kernel_initializer(shape, dtype=None, kernelScale=1):
     # Start with a small negative weight so we test using both signs. Could
     # center weight distribution around 0, but that would lead to low rates and
     # we'd have to run for more timesteps to get good correlation.
-    kernel = np.random.randint(-1, kernelScale, shape)
+    if random:
+        kernel = np.random.randint(-1, kernelScale, shape)
+    else:
+        kernel = np.reshape(1 + np.arange(int(np.prod(shape))), shape) * \
+            kernelScale
     return tf.constant(kernel, dtype)
 
 

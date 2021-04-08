@@ -184,12 +184,12 @@ def _getPadding(inputShape, padding, kernelShape, strides, dilation,
         ky, kx = kernelShape
         sy, sx = strides
         dy, dx = dilation
-        qy = (sy * (np.ceil(height / sy) - 1) + dy * ky - height) / 2
+        qy = (sy * (np.ceil(height / sy) - 1) + dy * (ky - 1) + 1 - height) / 2
         py0 = py1 = int(qy)
         # No need to pad if kernel size is 1.
         if qy % 1 and ky > 1:
             py1 += 1
-        qx = (sx * (np.ceil(width / sx) - 1) + dx * kx - width) / 2
+        qx = (sx * (np.ceil(width / sx) - 1) + dx * (kx - 1) + 1 - width) / 2
         px0 = px1 = int(qx)
         if qx % 1 and kx > 1:
             px1 += 1
