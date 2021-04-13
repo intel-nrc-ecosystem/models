@@ -31,7 +31,7 @@ import numpy as np
 from tensorflow import keras
 
 import nxsdk_modules_ncl.dnn.src.dnn_layers as nxtf
-from nxsdk.graph.nxboard import N2Board
+from nxsdk.arch.n2a.n2board import N2Board
 from nxsdk.api.enums.api_enums import ProbeParameter
 from nxsdk.graph.monitor.probes import IntervalProbeCondition, \
     PerformanceProbeCondition

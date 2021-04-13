@@ -49,7 +49,7 @@ from nxsdk_modules_ncl.dnn.src.utils import getWeightsFromIds, _interleave, \
     _getMultiplicityMapConvlike, _getUniqueSourceGroups, _getSizeInterleaved, \
     _getDestinationGroups, _getPadding, _genKernelIdMap, \
     getPartitionCandidates, getS, logMemTime
-from nxsdk.graph.nxboard import N2Board
+from nxsdk.arch.n2a.n2board import N2Board
 from nxsdk.logutils.nxlogging import get_logger
 
 if TYPE_CHECKING:

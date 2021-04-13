@@ -30,7 +30,7 @@ from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxFlatten, NxConv1D, loadNxModel
 from nxsdk_modules_ncl.dnn.src.synapse_compression import SynapseEncoder
 
-
+@unittest.skip
 class TestSynapseEncoding(unittest.TestCase):
     """Test various synapse encoding methods."""
 
@@ -502,7 +502,6 @@ class TestSynapseEncoding(unittest.TestCase):
                 for er, r in zip(expectedResult, result):
                     self.assertEqual(er, r)
 
-
 class TestNxConv2D(unittest.TestCase):
     """Test methods for partitioning a Nx convolution layer."""
 
@@ -750,6 +749,7 @@ class TestNxModel(unittest.TestCase):
         model = NxModel(inputLayer.input, outputLayer)
         model.clearTemp()
 
+    @unittest.skip
     def test_evaluateNxModel(self):
         """Check that NxModel can be evaluated like a Keras Model."""
 
@@ -764,6 +764,7 @@ class TestNxModel(unittest.TestCase):
                        np.random.random_sample(model.output_shape))
         model.clearTemp()
 
+    @unittest.skip
     def test_saveLoadNxModel(self):
         """Check that NxModel can be saved and loaded like a Keras Model."""
 

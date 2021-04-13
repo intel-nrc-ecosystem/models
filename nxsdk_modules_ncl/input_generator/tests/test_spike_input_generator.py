@@ -26,7 +26,7 @@ from nxsdk.composable.interfaces.composable_enums import ResourceMapType
 from nxsdk.composable.model import Model
 from nxsdk.composable.port_impl import StateInputPort
 from nxsdk.composable.resource_map import ResourceMapFactory
-from nxsdk.graph.nxboard import N2Board
+from nxsdk.arch.n2a.n2board import N2Board
 from nxsdk_modules_ncl.input_generator.spike_input_generator import SpikeInputGenerator
 import numpy as np
 

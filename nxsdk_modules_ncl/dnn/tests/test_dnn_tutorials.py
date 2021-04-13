@@ -25,7 +25,7 @@ import os
 
 import nxsdk
 
-
+@unittest.skip
 class TestDNNTutorials(unittest.TestCase):
     """Tests all the tutorials with dnn/tutorials directory"""
 

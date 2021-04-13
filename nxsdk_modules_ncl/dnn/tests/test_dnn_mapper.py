@@ -19,7 +19,7 @@ import unittest
 from test import support
 import numpy as np
 
-from nxsdk.graph.nxboard import N2Board
+from nxsdk.arch.n2a.n2board import N2Board
 from nxsdk_modules_ncl.dnn.src.data_structures import Layer, SynFmt, Partition, \
     SynapseGroup, SynEntry, OutputAxonGroup, InputAxonGroup, CompartmentGroup
 from nxsdk_modules_ncl.dnn.src.dnn_mapper import DnnMapper

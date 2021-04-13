@@ -23,7 +23,7 @@ from nxsdk.composable.resource_map import CompartmentResourceMap, ResourceMapFac
 import unittest
 from nxsdk.composable.model import Model
 from nxsdk_modules_ncl.input_generator.input_generator import InputGenerator
-from nxsdk.graph.nxboard import N2Board
+from nxsdk.arch.n2a.n2board import N2Board
 import numpy as np
 
 

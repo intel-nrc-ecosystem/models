@@ -13,7 +13,7 @@ import networkx as netx
 from quantities import ms
 from scipy.sparse import coo_matrix
 import nxsdk.api.n2a as nx
-from nxsdk.graph.nxboard import N2Board
+from nxsdk.arch.n2a.n2board import N2Board
 from nxsdk.graph.monitor.probes import SpikeProbeCondition, IntervalProbeCondition
 from tqdm import trange
 

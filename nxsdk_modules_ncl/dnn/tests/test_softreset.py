@@ -2,10 +2,13 @@ import unittest
 from test import support
 
 import numpy as np
+import tensorflow as tf
 from matplotlib import pyplot as plt
 
 # from nxsdk_modules_ncl.dnn.tests.test_dnn_compiler import extract, \
 #     kernel_initializer, _data_to_img, normalize_image_dims
+
+from nxsdk_modules_ncl.dnn.src.utils import extract
 from nxsdk_modules_ncl.dnn.src.dnn_layers import NxInputLayer, NxConv2D, \
     NxModel, ProbableStates, NxLayer
 from functools import partial
@@ -120,6 +123,7 @@ class Test_SoftReset(unittest.TestCase):
                           np.ravel(layer_activations[0], 'F')[:numProbes // 2])[0, 1]
         self.assertGreater(cor, 0.99)
 
+    @unittest.skip
     def test_random_cor(self):
         """
         Tests the soft reset mode by comparing activations from an ANN
@@ -365,6 +369,60 @@ def to_integer(weights, biases, bitwidth, norm):
     weights = np.clip(weights / norm * a_max, a_min, a_max).astype(int)
     biases = np.clip(biases / norm * a_max, a_min, a_max).astype(int)
     return weights, biases
+
+
+def _data_to_img(data, shape):
+    """Sum probe data across time and reshape flat probe data into image shape.
+
+    Reshaping is done in Fortran style because that is how the probes were
+    created by the partitioner.
+
+    :param np.ndarray data:
+    :param list | tuple | np.ndarray shape: Image shape to transform data to.
+    :return: The probe data summed over time and reshaped to image shape.
+    :rtype: np.ndarray
+    """
+
+    return np.reshape(np.sum(data, 0), shape, 'F')
+
+
+def normalize_image_dims(image):
+    """Add or remove dimensions from ``image`` to make it 2D.
+
+    :param np.ndarray image: Image to transform.
+
+    :return: Transformed image.
+    :rtype: np.ndarray
+    """
+
+    if image.ndim == 1:
+        return np.expand_dims(image, 1)
+    if image.ndim == 3:
+        return image[:, :, 0]
+    return image
+
+
+def kernel_initializer(shape, dtype=None, kernelScale=1, random=True):
+    """Random integer kernel initializer for Keras layer.
+
+    :param list | tuple | np.ndarray shape: Shape of kernel.
+    :param str | type | None dtype: Data type of kernel.
+    :param int kernelScale: Scale factor applied to the kernel.
+    :param bool random: If false, kernel will be linearly increasing list of
+    integers, and random integers otherwise.
+
+    :return: Kernel tensor.
+    """
+
+    # Start with a small negative weight so we test using both signs. Could
+    # center weight distribution around 0, but that would lead to low rates and
+    # we'd have to run for more timesteps to get good correlation.
+    if random:
+        kernel = np.random.randint(-1, kernelScale, shape)
+    else:
+        kernel = np.reshape(1 + np.arange(int(np.prod(shape))), shape) * \
+            kernelScale
+    return tf.constant(kernel, dtype)
 
 
 def main():
