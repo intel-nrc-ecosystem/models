@@ -744,13 +744,32 @@ class QuboSolver(CspSolver):
     def _build(self):
         """Build the actual SNN.
         """
+
+        def get_mantissa_exponent(value):
+            e = 0
+            while abs(value) > (2 ** 12 - 1) * 2 ** e:
+                e += 1
+            assert e <= 7, "Specified bias is too large to be expressed by int13 mantissa and uint3 exponent."
+            m1 = np.floor(value / 2 ** e)
+            m2 = np.ceil(value / 2 ** e)
+            err1 = abs(value - m1 * 2 ** e)
+            err2 = abs(value - m2 * 2 ** e)
+            m = m1 if err2 > err1 else m2
+            return m, e
+
         self.snn = SnnBuilder(self.qubo.num_variables,
                               self.qubo.domain_size, constraints=None, q_mtx=self.qubo.q_mtx,
                               q_weight_scaling=self.q_weight_scaling,
                               mckwargs=self._nkwargs,
                               **self._snnkwargs)
-        for idx, neuron in enumerate(self.snn.principal_population):
-            neuron.biasMant = self.biases[idx]
+        if 'bias_exp' in self._nkwargs.keys():
+            for idx, neuron in enumerate(self.snn.principal_population):
+                neuron.biasMant=self.biases[idx]
+        else:
+            for idx, neuron in enumerate(self.snn.principal_population):
+                m, e = get_mantissa_exponent(self.biases[idx])
+                neuron.biasMant = m
+                neuron.biasExp = e
 
 
 class SnnBuilder:
@@ -1392,7 +1411,8 @@ class MultiCompartment(Probable):
                  nkwargs=None,
                  w_min=None,
                  num_dendritic_accumulators=8,
-                 num_delay_bits=3
+                 num_delay_bits=3,
+                 bias_exp=None
                  ):
         super().__init__()
         assert bias_to_fire >= box_duration or bias_to_fire == -1
@@ -1404,6 +1424,7 @@ class MultiCompartment(Probable):
         self._num_dendritic_acumulators = num_dendritic_accumulators
         self._readout_autapse_delay = readout_autapse_delay
         self.bias_to_fire = bias_to_fire
+        self._bias_exp = bias_exp
         self._v_decay = 0
         self._u_decay = 0
         self._vMinExp = v_min_exp
@@ -1661,7 +1682,7 @@ class MultiCompartment(Probable):
         :return: bias current exponent for middle compartment.
         :rtype: int
         """
-        return 6
+        return self._bias_exp if self._bias_exp is not None else 6
 
     @_b_1_exp.setter
     def _b_1_exp(self, value):

@@ -117,7 +117,7 @@ class TestQuboSolver(unittest.TestCase):
         pass
 
     def tearDown(self) -> None:
-        os.system("scancel -u %s"%os.getlogin())
+        os.system("scancel -u %s" % os.getlogin())
 
     def test_userx(self):
         """Polynomial minimization with y=-5x_1 -3x_2 -8x_3 -6x_4 + 4x_1x_2+8x_1x_3+2x_2x_3+10x_3x_4"""
@@ -129,7 +129,8 @@ class TestQuboSolver(unittest.TestCase):
                                 [0, 0, 5, -6]])
             solver = QuboSolver(Q, q_weight_scaling=1, snnkwargs=dict(w_exp=6, box_duration=6),
                                 nkwargs=dict(noise_at_multicompartment=dict(mantissa=0, exponent=1),
-                                             v_th_1_mant=8 * 2 * 6))
+                                             v_th_1_mant=8 * 2 * 6,
+                                             bias_exp=6))
             solution = solver.solve(runtime=200, seed=np.random.random_integers(0, 2 ** 32, 1)[0],
                                     target_cost=2,
                                     )
@@ -147,7 +148,8 @@ class TestQuboSolver(unittest.TestCase):
                                 [0, 0, -1, -1, 2]])
             solver = QuboSolver(-Q, q_weight_scaling=2, snnkwargs=dict(w_exp=6, box_duration=6),
                                 nkwargs=dict(noise_at_multicompartment=dict(mantissa=0, exponent=1),
-                                             v_th_1_mant=3 * 4 * 6))
+                                             v_th_1_mant=3 * 4 * 6,
+                                             bias_exp=6))
             solution = solver.solve(runtime=20000, seed=np.random.random_integers(0, 2 ** 32, 1)[0],
                                     target_cost=2,
                                     )
@@ -168,7 +170,8 @@ class TestQuboSolver(unittest.TestCase):
                                 [-3, 0, -3, 1]])
             solver = QuboSolver(-Q, q_weight_scaling=1, snnkwargs=dict(w_exp=6, box_duration=6),
                                 nkwargs=dict(noise_at_multicompartment=dict(mantissa=0, exponent=7),
-                                             v_th_1_mant=1 * 4 * 6))
+                                             v_th_1_mant=1 * 4 * 6,
+                                             bias_exp=6))
             solution = solver.solve(runtime=20000, seed=np.random.random_integers(0, 2 ** 32, 1)[0],
                                     target_cost=2,
                                     )
@@ -201,7 +204,8 @@ class TestQuboSolver(unittest.TestCase):
 
             solver = QuboSolver(Q, q_weight_scaling=1, snnkwargs=dict(w_exp=6, box_duration=6),
                                 nkwargs=dict(noise_at_multicompartment=dict(mantissa=0, exponent=7),
-                                             v_th_1_mant=4 * 4 * 6))
+                                             v_th_1_mant=4 * 4 * 6,
+                                             bias_exp=6))
             solution = solver.solve(runtime=20000, seed=np.random.random_integers(0, 2 ** 32, 1)[0],
                                     target_cost=5,
                                     )
@@ -224,7 +228,8 @@ class TestQuboSolver(unittest.TestCase):
                             [20., 20., 20., 10., 10., -28.]])
             solver = QuboSolver(Q, q_weight_scaling=10, snnkwargs=dict(w_exp=6, box_duration=6),
                                 nkwargs=dict(noise_at_multicompartment=dict(mantissa=0, exponent=3),
-                                             v_th_1_mant=2 * 2 * 6))
+                                             v_th_1_mant=2 * 2 * 6,
+                                             bias_exp=6))
             solution = solver.solve(runtime=20000, seed=np.random.random_integers(0, 2 ** 32, 1)[0],
                                     target_cost=2,
                                     )
