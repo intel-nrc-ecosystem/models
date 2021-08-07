@@ -1,0 +1,2 @@
+model_checkpoint_path: "sMNIST_standardLSTM"
+all_model_checkpoint_paths: "sMNIST_standardLSTM"
