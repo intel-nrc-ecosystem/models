@@ -35,3 +35,10 @@ For community support, Q&A and other information, please visit: http://neuromorp
 
   * Version 1.4
   * Updated for nxsdk version 1.0.0
+
+* SpyTorch2Loihi :
+  * SpyTorch2Loihi code is an extension of Slayer to import and deploy any trained (feedforward and recurrent) spiking neural network from SpyTorch into Loihi. The training and export code is available in "https://github.com/event-driven-robotics/tactile_braille_reading" as part of the work on "Braille Letter Reading: A Benchmark for Spatio-Temporal Pattern Recognition on Neuromorphic Hardware" (https://arxiv.org/abs/2205.15864).
+  
+  * Contributors:
+    - Lyes Khacef (l.khacef@rug.nl)
+    - Sumit Bam Shrestha
